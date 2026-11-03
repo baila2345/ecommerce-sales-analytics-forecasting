@@ -1,0 +1,24 @@
+# Local environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Node and Vite
+node_modules/
+dist/
+.vite/
+
+# Runtime data and ML artifacts
+data/raw/
+artifacts/
+
+# IDE and office lock files
+.vscode/
+.idea/
+.DS_Store
+.~lock.*
