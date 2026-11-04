@@ -3,8 +3,11 @@ name: ecommerce-sales-analytics
 services:
   mysql:
     image: mysql:8.4
+    command: --default-time-zone=+00:00
     env_file:
       - .env
+    environment:
+      TZ: UTC
     ports:
       - "3306:3306"
     volumes:
@@ -15,6 +18,21 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    restart: unless-stopped
+    networks:
+      - app_network
+
+  phpmyadmin:
+    image: phpmyadmin:5.2-apache
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      mysql:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - app_network
@@ -38,8 +56,13 @@ services:
     build:
       context: ./apps/api
       dockerfile: Dockerfile
+      args:
+        INSTALL_DEV: "true"
     env_file:
       - .env
+    environment:
+      PYTHONPATH: /app
+      TZ: UTC
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"

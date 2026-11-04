@@ -25,6 +25,7 @@ Các địa chỉ phát triển:
 - Frontend: http://localhost:5173
 - API health: http://localhost:8000/health
 - OpenAPI/Swagger: http://localhost:8000/docs
+- phpMyAdmin: http://localhost:8080
 - MySQL: `localhost:3306`
 - Redis: `localhost:6379`
 
@@ -43,3 +44,25 @@ docker compose down
 ```
 
 Lệnh trên giữ nguyên dữ liệu trong named volumes. Chỉ dùng `down -v` khi thực sự muốn xóa dữ liệu MySQL, Redis và dependencies volume của frontend.
+
+## Database migrations
+
+Sau khi MySQL và API đã chạy:
+
+```bash
+docker compose exec api alembic upgrade head
+docker compose exec api alembic current
+```
+
+Kiểm tra các bảng trong MySQL:
+
+```bash
+docker compose exec mysql sh -c \
+  'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e "SHOW TABLES;"'
+```
+
+Chạy kiểm thử backend:
+
+```bash
+docker compose exec api pytest -q
+```
