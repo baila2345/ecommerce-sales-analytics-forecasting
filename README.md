@@ -81,3 +81,16 @@ http://localhost:8000/docs với các endpoint:
 
 - `POST /api/v1/auth/login`
 - `GET /api/v1/auth/me`
+
+Giao diện đăng nhập tại http://localhost:5173. Sử dụng `ADMIN_EMAIL` và
+`ADMIN_PASSWORD` trong `.env` sau khi đã chạy lệnh seed. Access token chỉ được
+lưu trong `sessionStorage`; mật khẩu không được lưu trên trình duyệt.
+
+Kiểm tra frontend trong Docker:
+
+```bash
+docker compose run --rm --no-deps web npm run typecheck
+docker compose run --rm --no-deps web npm test
+docker compose run --rm --no-deps web npm run build
+docker compose run --rm --no-deps web npm audit
+```
