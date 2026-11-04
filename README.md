@@ -66,3 +66,18 @@ Chạy kiểm thử backend:
 ```bash
 docker compose exec api pytest -q
 ```
+
+## Authentication
+
+Sau khi migration đã chạy, tạo tài khoản admin từ `ADMIN_EMAIL` và
+`ADMIN_PASSWORD` trong file `.env`:
+
+```bash
+docker compose exec api python -m app.scripts.seed_admin
+```
+
+Lệnh seed có thể chạy lại an toàn và không tạo tài khoản trùng. Kiểm thử API tại
+http://localhost:8000/docs với các endpoint:
+
+- `POST /api/v1/auth/login`
+- `GET /api/v1/auth/me`
