@@ -95,6 +95,29 @@ docker compose exec api alembic upgrade head
 docker compose exec api alembic check
 ```
 
+### Import CSV: product categories
+
+Luồng import đầu tiên hỗ trợ file `product_category_name_translation.csv` và chỉ
+cho phép tài khoản `admin` hoặc `analyst` thực hiện:
+
+1. `POST /api/v1/imports/product-categories/preview` nhận multipart field `file`,
+   kiểm tra UTF-8, header, dữ liệu bắt buộc và dữ liệu trùng; kết quả trả tối đa 5
+   dòng preview cùng `batch_id`.
+2. `POST /api/v1/imports/product-categories/{batch_id}/commit` nhận lại cùng file
+   và chỉ import khi SHA-256 khớp với file đã preview.
+
+Nếu validation thất bại, batch và lỗi theo dòng vẫn được lưu vào `import_batches`
+và `import_errors`. Giao diện thực hiện luồng này tại http://localhost:5173/imports.
+
+Module import được tách theo trách nhiệm để mở rộng từng dataset:
+
+- `domain.py`: các kiểu dữ liệu nghiệp vụ, không phụ thuộc database.
+- `file_reader.py`: đọc upload, giới hạn kích thước và tạo checksum.
+- `parsers/`: parse và validation riêng cho từng loại CSV.
+- `repositories.py`: truy cập `ImportBatch`, audit event và bảng đích.
+- `services/`: điều phối use case preview hoặc commit và quản lý transaction.
+- `factory.py`: lắp các dependency; `router.py` chỉ xử lý HTTP.
+
 ## Authentication
 
 Sau khi migration đã chạy, tạo tài khoản admin từ `ADMIN_EMAIL` và

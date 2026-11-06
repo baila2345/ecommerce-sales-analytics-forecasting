@@ -1,4 +1,4 @@
-import { Outlet } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 
 import { useAuth } from "../features/auth/AuthProvider";
 
@@ -10,6 +10,7 @@ const roleLabels = {
 
 export function AppLayout() {
   const { user, logout } = useAuth();
+  const canImport = user?.role === "admin" || user?.role === "analyst";
 
   return (
     <div className="app-shell">
@@ -22,8 +23,12 @@ export function AppLayout() {
           </span>
         </div>
         <nav className="sidebar__nav" aria-label="Điều hướng chính">
-          <a className="nav-item nav-item--active" href="/"><span aria-hidden="true">▦</span>Tổng quan</a>
-          <span className="nav-item nav-item--disabled"><span aria-hidden="true">⇧</span>Nhập dữ liệu<small>Tiếp theo</small></span>
+          <NavLink className={({ isActive }) => `nav-item${isActive ? " nav-item--active" : ""}`} to="/" end><span aria-hidden="true">▦</span>Tổng quan</NavLink>
+          {canImport ? (
+            <NavLink className={({ isActive }) => `nav-item${isActive ? " nav-item--active" : ""}`} to="/imports"><span aria-hidden="true">⇧</span>Nhập dữ liệu<small>Mới</small></NavLink>
+          ) : (
+            <span className="nav-item nav-item--disabled"><span aria-hidden="true">⇧</span>Nhập dữ liệu</span>
+          )}
           <span className="nav-item nav-item--disabled"><span aria-hidden="true">⌁</span>Dự báo</span>
         </nav>
         <div className="sidebar__footer">

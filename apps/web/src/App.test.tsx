@@ -80,3 +80,66 @@ describe("authentication flow", () => {
     expect(sessionStorage.getItem("sales_analytics_access_token")).toBeNull();
   });
 });
+
+describe("product category import flow", () => {
+  it("previews the selected CSV before confirming the import", async () => {
+    window.history.replaceState({}, "", "/imports");
+    sessionStorage.setItem("sales_analytics_access_token", "existing-token");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(userProfile))
+      .mockResolvedValueOnce(jsonResponse({
+        batch_id: 12,
+        dataset_type: "product_categories",
+        filename: "product_category_name_translation.csv",
+        columns: ["product_category_name", "product_category_name_english"],
+        total_rows: 2,
+        valid_rows: 2,
+        rejected_rows: 0,
+        preview_rows: [
+          {
+            product_category_name: "beleza_saude",
+            product_category_name_english: "health_beauty",
+          },
+          {
+            product_category_name: "informatica_acessorios",
+            product_category_name_english: "computers_accessories",
+          },
+        ],
+        errors: [],
+        can_import: true,
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        batch_id: 12,
+        dataset_type: "product_categories",
+        status: "completed",
+        imported_rows: 2,
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const file = new File(
+      [
+        "product_category_name,product_category_name_english\n" +
+        "beleza_saude,health_beauty\n",
+      ],
+      "product_category_name_translation.csv",
+      { type: "text/csv" },
+    );
+
+    render(<App />);
+    await user.upload(await screen.findByLabelText(/Chọn file CSV/), file);
+    await user.click(screen.getByRole("button", { name: "Kiểm tra & xem trước" }));
+
+    expect(await screen.findByText("health_beauty")).toBeInTheDocument();
+    expect(screen.getByText("Có thể import")).toBeInTheDocument();
+    expect(screen.queryByText("Import thành công")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Xác nhận import" }));
+
+    expect(await screen.findByText("Import thành công")).toBeInTheDocument();
+    expect(screen.getByText(/Đã ghi 2 danh mục/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const previewOptions = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(previewOptions.body).toBeInstanceOf(FormData);
+    expect((previewOptions.headers as Headers).has("Content-Type")).toBe(false);
+  });
+});
