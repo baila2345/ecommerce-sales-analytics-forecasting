@@ -1,6 +1,6 @@
 import { apiRequest } from "../../api/client";
 import { tokenStorage } from "../auth/storage";
-import type { ImportCommitResult, ProductCategoryPreview } from "./types";
+import type { DatasetInfo, ImportCommitResult, ImportPreview } from "./types";
 
 
 function fileForm(file: File): FormData {
@@ -9,11 +9,18 @@ function fileForm(file: File): FormData {
   return form;
 }
 
-export function previewProductCategories(
+export function listImportDatasets(): Promise<DatasetInfo[]> {
+  return apiRequest<DatasetInfo[]>("/api/v1/imports/datasets", {
+    token: tokenStorage.get(),
+  });
+}
+
+export function previewDataset(
+  routeSlug: string,
   file: File,
-): Promise<ProductCategoryPreview> {
-  return apiRequest<ProductCategoryPreview>(
-    "/api/v1/imports/product-categories/preview",
+): Promise<ImportPreview> {
+  return apiRequest<ImportPreview>(
+    `/api/v1/imports/${routeSlug}/preview`,
     {
       method: "POST",
       body: fileForm(file),
@@ -22,12 +29,13 @@ export function previewProductCategories(
   );
 }
 
-export function commitProductCategories(
+export function commitDataset(
+  routeSlug: string,
   batchId: number,
   file: File,
 ): Promise<ImportCommitResult> {
   return apiRequest<ImportCommitResult>(
-    `/api/v1/imports/product-categories/${batchId}/commit`,
+    `/api/v1/imports/${routeSlug}/${batchId}/commit`,
     {
       method: "POST",
       body: fileForm(file),

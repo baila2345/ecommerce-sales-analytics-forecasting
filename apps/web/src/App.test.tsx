@@ -45,6 +45,9 @@ describe("authentication flow", () => {
     await user.click(screen.getByRole("button", { name: "Đăng nhập" }));
 
     expect(await screen.findByRole("heading", { name: "Xin chào, admin" })).toBeInTheDocument();
+    expect(screen.getByText("Data Import")).toBeInTheDocument();
+    expect(screen.getByText("9 loại dữ liệu")).toBeInTheDocument();
+    expect(screen.getByText("Analytics Dashboard")).toBeInTheDocument();
     expect(sessionStorage.getItem("sales_analytics_access_token")).toBe("test-token");
     expect(JSON.stringify(sessionStorage)).not.toContain("valid-test-password");
   });
@@ -87,6 +90,16 @@ describe("product category import flow", () => {
     sessionStorage.setItem("sales_analytics_access_token", "existing-token");
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(userProfile))
+      .mockResolvedValueOnce(jsonResponse([
+        {
+          dataset_type: "product_categories",
+          route_slug: "product-categories",
+          display_name: "Danh mục sản phẩm",
+          expected_filename: "product_category_name_translation.csv",
+          columns: ["product_category_name", "product_category_name_english"],
+          max_file_size_mb: 5,
+        },
+      ]))
       .mockResolvedValueOnce(jsonResponse({
         batch_id: 12,
         dataset_type: "product_categories",
@@ -136,9 +149,9 @@ describe("product category import flow", () => {
     await user.click(screen.getByRole("button", { name: "Xác nhận import" }));
 
     expect(await screen.findByText("Import thành công")).toBeInTheDocument();
-    expect(screen.getByText(/Đã ghi 2 danh mục/)).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    const previewOptions = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(screen.getByText(/Đã ghi 2 dòng/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const previewOptions = fetchMock.mock.calls[2][1] as RequestInit;
     expect(previewOptions.body).toBeInstanceOf(FormData);
     expect((previewOptions.headers as Headers).has("Content-Type")).toBe(false);
   });

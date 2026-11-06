@@ -118,6 +118,33 @@ Module import được tách theo trách nhiệm để mở rộng từng datase
 - `services/`: điều phối use case preview hoặc commit và quản lý transaction.
 - `factory.py`: lắp các dependency; `router.py` chỉ xử lý HTTP.
 
+### Các dataset được hỗ trợ
+
+Trang http://localhost:5173/imports hỗ trợ đủ 9 file Olist. Import theo thứ tự để
+bảo đảm khóa ngoại:
+
+1. `product_category_name_translation.csv`
+2. `olist_customers_dataset.csv`
+3. `olist_sellers_dataset.csv`
+4. `olist_products_dataset.csv`
+5. `olist_orders_dataset.csv`
+6. `olist_order_items_dataset.csv`
+7. `olist_order_payments_dataset.csv`
+8. `olist_order_reviews_dataset.csv`
+9. `olist_geolocation_dataset.csv`
+
+`GET /api/v1/imports/datasets` trả metadata của tất cả dataset. Tám dataset ngoài
+product categories dùng hai endpoint tổng quát:
+
+- `POST /api/v1/imports/{dataset_slug}/preview`
+- `POST /api/v1/imports/{dataset_slug}/{batch_id}/commit`
+
+Parser kiểm tra header, kiểu dữ liệu, giá trị bắt buộc, khóa trùng và constraint
+theo từng dataset. Preview cũng kiểm tra customer/order/product/seller tham chiếu
+đã tồn tại. Import sử dụng upsert theo batch; riêng geolocation thay thế snapshot
+cũ trong cùng transaction. Các file nhỏ trong thư mục `samples/` có thể dùng để
+test thủ công theo thứ tự trên.
+
 ## Authentication
 
 Sau khi migration đã chạy, tạo tài khoản admin từ `ADMIN_EMAIL` và

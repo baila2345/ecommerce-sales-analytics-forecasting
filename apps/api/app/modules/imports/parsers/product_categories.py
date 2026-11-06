@@ -1,5 +1,6 @@
 import csv
 import io
+from dataclasses import replace
 
 from app.modules.imports.domain import (
     ParsedProductCategories,
@@ -65,6 +66,12 @@ class ProductCategoryCsvParser:
                 english_name,
                 seen_categories,
             )
+            raw_data = {
+                str(key): value
+                for key, value in raw_row.items()
+                if key is not None
+            }
+            row_issues = [replace(issue, raw_data=raw_data) for issue in row_issues]
             if category_name:
                 seen_categories.add(category_name)
             if row_issues:

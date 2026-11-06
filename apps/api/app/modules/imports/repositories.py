@@ -1,7 +1,10 @@
 from datetime import datetime
+from collections.abc import Iterable
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.db.base import utc_now
@@ -12,6 +15,7 @@ from app.db.models import (
     ImportStatus,
     ProductCategory,
 )
+from app.modules.imports.datasets import DatasetSpec, ReferenceSpec
 from app.modules.imports.domain import ProductCategoryRow, ValidationIssue
 
 
@@ -62,6 +66,7 @@ class ImportBatchRepository:
                     field_name=issue.field_name,
                     error_code=issue.code,
                     error_message=issue.message,
+                    raw_data=issue.raw_data,
                 )
                 for issue in issues
             ]
@@ -146,3 +151,101 @@ class AuditEventRepository:
                 payload_json=payload,
             )
         )
+
+
+class DatasetRepository:
+    def __init__(self, session: Session, chunk_size: int = 1000) -> None:
+        self.session = session
+        self.chunk_size = chunk_size
+
+    def find_missing_references(
+        self,
+        reference: ReferenceSpec,
+        values: set[Any],
+    ) -> set[Any]:
+        if not values:
+            return set()
+        column = getattr(reference.model, reference.target_field)
+        existing: set[Any] = set()
+        value_list = list(values)
+        for start in range(0, len(value_list), self.chunk_size):
+            chunk = value_list[start : start + self.chunk_size]
+            existing.update(
+                self.session.scalars(select(column).where(column.in_(chunk)))
+            )
+        return values - existing
+
+    def import_rows(
+        self,
+        dataset: DatasetSpec,
+        rows: Iterable[dict[str, Any]],
+    ) -> int:
+        if dataset.replace_existing:
+            self.session.execute(delete(dataset.model))
+
+        imported_rows = 0
+        chunk: list[dict[str, Any]] = []
+        for row in rows:
+            chunk.append(row)
+            if len(chunk) >= self.chunk_size:
+                self._write_chunk(dataset, chunk)
+                imported_rows += len(chunk)
+                chunk = []
+        if chunk:
+            self._write_chunk(dataset, chunk)
+            imported_rows += len(chunk)
+        return imported_rows
+
+    def _write_chunk(
+        self,
+        dataset: DatasetSpec,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        if dataset.create_missing_categories:
+            self._ensure_product_categories(rows)
+        if dataset.replace_existing:
+            self.session.execute(dataset.model.__table__.insert(), rows)
+            return
+
+        dialect_name = self.session.get_bind().dialect.name
+        if dialect_name == "mysql":
+            statement = mysql_insert(dataset.model).values(rows)
+            statement = statement.on_duplicate_key_update(
+                **{
+                    field: statement.inserted[field]
+                    for field in dataset.update_fields
+                }
+            )
+        elif dialect_name == "sqlite":
+            statement = sqlite_insert(dataset.model).values(rows)
+            statement = statement.on_conflict_do_update(
+                index_elements=list(dataset.key_fields),
+                set_={
+                    field: statement.excluded[field]
+                    for field in dataset.update_fields
+                },
+            )
+        else:
+            raise RuntimeError(f"Unsupported database dialect: {dialect_name}")
+        self.session.execute(statement)
+
+    def _ensure_product_categories(self, rows: list[dict[str, Any]]) -> None:
+        category_names = {
+            row["product_category_name"]
+            for row in rows
+            if row.get("product_category_name")
+        }
+        if not category_names:
+            return
+        existing = set(
+            self.session.scalars(
+                select(ProductCategory.category_name).where(
+                    ProductCategory.category_name.in_(category_names)
+                )
+            )
+        )
+        self.session.add_all(
+            ProductCategory(category_name=name, category_name_english=None)
+            for name in category_names - existing
+        )
+        self.session.flush()

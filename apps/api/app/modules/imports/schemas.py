@@ -1,7 +1,10 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.modules.imports.domain import (
     ImportCommitOutcome,
+    DatasetPreviewOutcome,
     ProductCategoryPreviewOutcome,
 )
 
@@ -77,4 +80,50 @@ class ImportCommitResponse(BaseModel):
             dataset_type=outcome.dataset_type,
             status=outcome.status,
             imported_rows=outcome.imported_rows,
+        )
+
+
+class DatasetInfoResponse(BaseModel):
+    dataset_type: str
+    route_slug: str
+    display_name: str
+    expected_filename: str
+    columns: list[str]
+    max_file_size_mb: int
+
+
+class DatasetPreviewResponse(BaseModel):
+    batch_id: int
+    dataset_type: str
+    filename: str
+    columns: list[str]
+    total_rows: int
+    valid_rows: int
+    rejected_rows: int
+    preview_rows: list[dict[str, Any]]
+    errors: list[ImportValidationErrorResponse]
+    can_import: bool
+
+    @classmethod
+    def from_outcome(cls, outcome: DatasetPreviewOutcome) -> "DatasetPreviewResponse":
+        inspection = outcome.inspection
+        return cls(
+            batch_id=outcome.batch_id,
+            dataset_type=outcome.dataset_type,
+            filename=outcome.filename,
+            columns=inspection.columns,
+            total_rows=inspection.total_rows,
+            valid_rows=inspection.valid_rows,
+            rejected_rows=len(inspection.rejected_row_numbers),
+            preview_rows=inspection.preview_rows,
+            errors=[
+                ImportValidationErrorResponse(
+                    row_number=issue.row_number,
+                    field_name=issue.field_name,
+                    code=issue.code,
+                    message=issue.message,
+                )
+                for issue in inspection.issues[:100]
+            ],
+            can_import=inspection.can_import,
         )

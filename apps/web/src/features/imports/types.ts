@@ -1,8 +1,3 @@
-export type ProductCategoryPreviewRow = {
-  product_category_name: string;
-  product_category_name_english: string;
-};
-
 export type ImportValidationError = {
   row_number: number | null;
   field_name: string | null;
@@ -10,22 +5,31 @@ export type ImportValidationError = {
   message: string;
 };
 
-export type ProductCategoryPreview = {
+export type DatasetInfo = {
+  dataset_type: string;
+  route_slug: string;
+  display_name: string;
+  expected_filename: string;
+  columns: string[];
+  max_file_size_mb: number;
+};
+
+export type ImportPreview = {
   batch_id: number;
-  dataset_type: "product_categories";
+  dataset_type: string;
   filename: string;
   columns: string[];
   total_rows: number;
   valid_rows: number;
   rejected_rows: number;
-  preview_rows: ProductCategoryPreviewRow[];
+  preview_rows: Record<string, unknown>[];
   errors: ImportValidationError[];
   can_import: boolean;
 };
 
 export type ImportCommitResult = {
   batch_id: number;
-  dataset_type: "product_categories";
+  dataset_type: string;
   status: "completed";
   imported_rows: number;
 };

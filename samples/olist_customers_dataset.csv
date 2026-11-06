@@ -1,0 +1,3 @@
+customer_id,customer_unique_id,customer_zip_code_prefix,customer_city,customer_state
+customer_sample_001,person_sample_001,14409,franca,SP
+customer_sample_002,person_sample_002,20040,rio de janeiro,RJ
