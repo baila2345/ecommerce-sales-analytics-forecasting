@@ -67,6 +67,34 @@ Chạy kiểm thử backend:
 docker compose exec api pytest -q
 ```
 
+## Olist database schema
+
+Migration `0002` tạo schema phân tích cho toàn bộ Brazilian E-Commerce Public
+Dataset by Olist:
+
+- `customers` và `orders`: khách hàng cùng vòng đời đơn hàng.
+- `order_items`, `products`, `product_categories`, `sellers`: chi tiết sản phẩm,
+  giá, phí vận chuyển, danh mục và người bán.
+- `order_payments` và `order_reviews`: thanh toán và đánh giá.
+- `geolocations`: nhiều tọa độ có thể cùng thuộc một ZIP prefix, vì vậy bảng dùng
+  khóa chính nội bộ và không tạo quan hệ một-một với customer/seller.
+- `import_batches` và `import_errors`: lịch sử file CSV, checksum, trạng thái,
+  thống kê số dòng và lỗi theo dòng.
+
+Thứ tự import bảo đảm khóa ngoại:
+
+1. Product category translation, customers và sellers.
+2. Products và orders.
+3. Order items, payments và reviews.
+4. Geolocations có thể import độc lập.
+
+Áp dụng và kiểm tra migration:
+
+```bash
+docker compose exec api alembic upgrade head
+docker compose exec api alembic check
+```
+
 ## Authentication
 
 Sau khi migration đã chạy, tạo tài khoản admin từ `ADMIN_EMAIL` và
