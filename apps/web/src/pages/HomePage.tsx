@@ -100,14 +100,14 @@ export function HomePage() {
             <strong>MySQL schema</strong>
             <p>Khóa ngoại, index và audit history đầy đủ.</p>
           </article>
-          <article className="status-card status-card--next">
+          <article className="status-card">
             <div className="status-card__head">
               <span className="status-card__icon status-card__icon--amber">↗</span>
-              <span className="module-state module-state--next">Tiếp theo</span>
+              <span className="module-state module-state--done">Hoàn tất</span>
             </div>
             <span>Analytics</span>
             <strong>Dashboard KPI</strong>
-            <p>Doanh thu, đơn hàng, khách hàng và sản phẩm.</p>
+            <p>KPI, xu hướng, sản phẩm, seller và giao hàng.</p>
           </article>
         </div>
       </section>
@@ -119,7 +119,7 @@ export function HomePage() {
               <p className="section-label">Lộ trình sản phẩm</p>
               <h2>Tiến độ triển khai</h2>
             </div>
-            <strong className="progress-value">2/4 phase</strong>
+            <strong className="progress-value">3/4 phase</strong>
           </div>
           <div className="progress-track"><span /></div>
           <ol className="phase-list">
@@ -129,11 +129,11 @@ export function HomePage() {
             <li className="phase phase--done">
               <span>02</span><div><strong>Data Import Pipeline</strong><small>Đã hoàn thành</small></div><b>✓</b>
             </li>
-            <li className="phase phase--active">
-              <span>03</span><div><strong>Analytics Dashboard</strong><small>Giai đoạn tiếp theo</small></div><b>→</b>
+            <li className="phase phase--done">
+              <span>03</span><div><strong>Analytics Dashboard</strong><small>Đã hoàn thành</small></div><b>✓</b>
             </li>
-            <li className="phase">
-              <span>04</span><div><strong>Revenue Forecasting</strong><small>Đã lên kế hoạch</small></div><b>·</b>
+            <li className="phase phase--active">
+              <span>04</span><div><strong>Revenue Forecasting</strong><small>Giai đoạn tiếp theo</small></div><b>→</b>
             </li>
           </ol>
         </article>

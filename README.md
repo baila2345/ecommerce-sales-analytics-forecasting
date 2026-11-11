@@ -145,6 +145,27 @@ theo từng dataset. Preview cũng kiểm tra customer/order/product/seller tham
 cũ trong cùng transaction. Các file nhỏ trong thư mục `samples/` có thể dùng để
 test thủ công theo thứ tự trên.
 
+## Analytics Dashboard
+
+Dashboard tại http://localhost:5173/analytics dành cho `admin`, `analyst` và
+`manager`. Báo cáo hỗ trợ lọc theo khoảng ngày mua hàng, bang khách hàng, danh
+mục sản phẩm và seller; bộ lọc hiện tại được giữ nguyên khi export CSV.
+
+Quy ước KPI:
+
+- Doanh thu là tổng `order_items.price` của đơn có trạng thái `delivered`.
+- Khách hàng được đếm theo `customer_unique_id`.
+- Giá trị đơn trung bình bằng doanh thu chia số đơn đã giao.
+- Thời gian giao hàng tính từ `order_purchase_timestamp` đến
+  `order_delivered_customer_date`.
+
+Các endpoint:
+
+- `GET /api/v1/analytics/dashboard`: KPI, xu hướng, trạng thái đơn, sản phẩm,
+  seller, khu vực và hiệu suất giao hàng.
+- `GET /api/v1/analytics/filters`: miền giá trị cho bộ lọc.
+- `GET /api/v1/analytics/export`: tải báo cáo CSV theo cùng bộ lọc.
+
 ## Authentication
 
 Sau khi migration đã chạy, tạo tài khoản admin từ `ADMIN_EMAIL` và

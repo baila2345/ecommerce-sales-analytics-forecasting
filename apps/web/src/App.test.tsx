@@ -156,3 +156,52 @@ describe("product category import flow", () => {
     expect((previewOptions.headers as Headers).has("Content-Type")).toBe(false);
   });
 });
+
+describe("analytics dashboard", () => {
+  it("loads KPI, charts, and business analysis from the analytics API", async () => {
+    window.history.replaceState({}, "", "/analytics");
+    sessionStorage.setItem("sales_analytics_access_token", "existing-token");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return Promise.resolve(jsonResponse(userProfile));
+      if (url.includes("/analytics/filters")) {
+        return Promise.resolve(jsonResponse({
+          min_date: "2018-01-01",
+          max_date: "2018-12-31",
+          states: ["SP"],
+          categories: ["beleza_saude"],
+          sellers: [{ id: "seller-1", label: "campinas, SP · seller-1" }],
+        }));
+      }
+      return Promise.resolve(jsonResponse({
+        filters: {},
+        overview: {
+          revenue: 1500,
+          orders: 12,
+          customers: 10,
+          average_order_value: 125,
+          items_sold: 15,
+          freight_value: 120,
+          delivered_rate: 92.3,
+          average_delivery_days: 5,
+        },
+        revenue_trend: [{ period: "2018-01", revenue: 1500, orders: 12 }],
+        order_statuses: [{ label: "delivered", value: 12, orders: 12 }],
+        top_categories: [{ label: "health_beauty", value: 1500, orders: 12 }],
+        top_products: [{ product_id: "product-123456", category: "health_beauty", revenue: 900, units: 8, orders: 7 }],
+        top_sellers: [{ seller_id: "seller-123456", location: "campinas, SP", revenue: 1500, orders: 12 }],
+        regions: [{ state: "SP", revenue: 1500, orders: 12, customers: 10 }],
+        delivery: [{ state: "SP", average_days: 5, on_time_rate: 95, delivered_orders: 12 }],
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Analytics Dashboard" })).toBeInTheDocument();
+    expect((await screen.findAllByText("health_beauty")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("5 ngày").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Export CSV/ })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});

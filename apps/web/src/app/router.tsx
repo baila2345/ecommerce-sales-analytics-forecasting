@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "../components/AppLayout";
 import { ProtectedRoute } from "../features/auth/ProtectedRoute";
 import { useAuth } from "../features/auth/AuthProvider";
+import { AnalyticsPage } from "../pages/AnalyticsPage";
 import { HomePage } from "../pages/HomePage";
 import { ImportPage } from "../pages/ImportPage";
 import { LoginPage } from "../pages/LoginPage";
@@ -28,6 +29,7 @@ export function AppRoutes() {
       >
         <Route index element={<HomePage />} />
         <Route path="imports" element={<ImportPage />} />
+        <Route path="analytics" element={<AnalyticsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

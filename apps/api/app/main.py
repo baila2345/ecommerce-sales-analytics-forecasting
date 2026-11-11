@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.middleware import RequestIdMiddleware
+from app.modules.analytics.router import router as analytics_router
 from app.modules.auth.router import router as auth_router
 from app.modules.imports.router import router as imports_router
 
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
     install_error_handlers(application)
     application.include_router(auth_router, prefix="/api/v1")
     application.include_router(imports_router, prefix="/api/v1")
+    application.include_router(analytics_router, prefix="/api/v1")
 
     @application.get("/health", tags=["system"])
     def health() -> dict[str, str]:

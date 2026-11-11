@@ -26,6 +26,24 @@ type ApiRequestOptions = RequestInit & {
   token?: string | null;
 };
 
+const requestUrl = (path: string) => `${apiBaseUrl}${path}`;
+
+async function errorFromResponse(response: Response): Promise<ApiError> {
+  let envelope: ErrorEnvelope = {};
+  try {
+    envelope = (await response.json()) as ErrorEnvelope;
+  } catch {
+    // The fallback below keeps infrastructure errors understandable.
+  }
+  return new ApiError(
+    response.status,
+    envelope.error?.code ?? "REQUEST_FAILED",
+    envelope.error?.message ?? "Không thể hoàn tất yêu cầu. Vui lòng thử lại.",
+    envelope.error?.details,
+    envelope.request_id,
+  );
+}
+
 export async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {},
@@ -44,26 +62,25 @@ export async function apiRequest<T>(
     headers.set("Authorization", `Bearer ${options.token}`);
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await fetch(requestUrl(path), {
     ...options,
     headers,
   });
 
   if (!response.ok) {
-    let envelope: ErrorEnvelope = {};
-    try {
-      envelope = (await response.json()) as ErrorEnvelope;
-    } catch {
-      // The fallback below keeps infrastructure errors understandable.
-    }
-    throw new ApiError(
-      response.status,
-      envelope.error?.code ?? "REQUEST_FAILED",
-      envelope.error?.message ?? "Không thể hoàn tất yêu cầu. Vui lòng thử lại.",
-      envelope.error?.details,
-      envelope.request_id,
-    );
+    throw await errorFromResponse(response);
   }
 
   return (await response.json()) as T;
+}
+
+export async function apiDownload(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<Blob> {
+  const headers = new Headers(options.headers);
+  if (options.token) headers.set("Authorization", `Bearer ${options.token}`);
+  const response = await fetch(requestUrl(path), { ...options, headers });
+  if (!response.ok) throw await errorFromResponse(response);
+  return response.blob();
 }
