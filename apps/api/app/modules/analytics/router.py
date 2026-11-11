@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.errors import AppError
 from app.db.models import User, UserRole
+from app.modules.analytics.cache import AnalyticsCache
 from app.modules.analytics.repository import AnalyticsRepository
 from app.modules.analytics.schemas import (
     AnalyticsDashboardResponse,
@@ -19,10 +21,12 @@ from app.modules.auth.dependencies import require_roles
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 analytics_user = require_roles(UserRole.ADMIN, UserRole.ANALYST, UserRole.MANAGER)
+analytics_cache = AnalyticsCache(get_settings().redis_url)
 
 
 def get_service(session: Session = Depends(get_db)) -> AnalyticsService:
-    return AnalyticsService(AnalyticsRepository(session))
+    cache = analytics_cache if session.get_bind().dialect.name == "mysql" else None
+    return AnalyticsService(AnalyticsRepository(session), cache)
 
 
 def get_query(

@@ -1,6 +1,7 @@
 import csv
 from io import StringIO
 
+from app.modules.analytics.cache import AnalyticsCache
 from app.modules.analytics.filters import AnalyticsFilters
 from app.modules.analytics.repository import AnalyticsRepository
 from app.modules.analytics.schemas import (
@@ -12,16 +13,28 @@ from app.modules.analytics.schemas import (
 
 
 class AnalyticsService:
-    def __init__(self, repository: AnalyticsRepository) -> None:
+    def __init__(
+        self,
+        repository: AnalyticsRepository,
+        cache: AnalyticsCache | None = None,
+    ) -> None:
         self.repository = repository
+        self.cache = cache
 
     @staticmethod
     def _filters(query: AnalyticsQuery) -> AnalyticsFilters:
         return AnalyticsFilters(**query.model_dump())
 
     def dashboard(self, query: AnalyticsQuery) -> AnalyticsDashboardResponse:
+        query_json = query.model_dump_json()
+        cache_key = self.cache.dashboard_key(query_json) if self.cache else None
+        if self.cache and cache_key:
+            cached = self.cache.get(cache_key)
+            if cached:
+                return AnalyticsDashboardResponse.model_validate_json(cached)
+
         filters = self._filters(query)
-        return AnalyticsDashboardResponse(
+        dashboard = AnalyticsDashboardResponse(
             filters=AppliedFilters(**query.model_dump()),
             overview=self.repository.overview(filters),
             revenue_trend=self.repository.revenue_trend(filters),
@@ -32,6 +45,9 @@ class AnalyticsService:
             regions=self.repository.regions(filters),
             delivery=self.repository.delivery(filters),
         )
+        if self.cache and cache_key:
+            self.cache.set(cache_key, dashboard.model_dump_json(), ttl_seconds=60)
+        return dashboard
 
     def filter_options(self) -> FilterOptions:
         return FilterOptions(**self.repository.filter_options())

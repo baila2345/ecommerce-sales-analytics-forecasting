@@ -27,6 +27,11 @@ class FieldSpec:
     name: str
     converter: Converter
     required: bool = True
+    source_name: str | None = None
+
+    @property
+    def csv_name(self) -> str:
+        return self.source_name or self.name
 
 
 @dataclass(frozen=True)
@@ -54,7 +59,7 @@ class DatasetSpec:
 
     @property
     def columns(self) -> tuple[str, ...]:
-        return tuple(field.name for field in self.fields)
+        return tuple(field.csv_name for field in self.fields)
 
 
 def text(max_length: int) -> Converter:
@@ -237,8 +242,18 @@ PRODUCTS = DatasetSpec(
     fields=(
         FieldSpec("product_id", text(32)),
         FieldSpec("product_category_name", text(255), required=False),
-        FieldSpec("product_name_length", integer, required=False),
-        FieldSpec("product_description_length", integer, required=False),
+        FieldSpec(
+            "product_name_length",
+            integer,
+            required=False,
+            source_name="product_name_lenght",
+        ),
+        FieldSpec(
+            "product_description_length",
+            integer,
+            required=False,
+            source_name="product_description_lenght",
+        ),
         FieldSpec("product_photos_qty", integer, required=False),
         FieldSpec("product_weight_g", integer, required=False),
         FieldSpec("product_length_cm", integer, required=False),

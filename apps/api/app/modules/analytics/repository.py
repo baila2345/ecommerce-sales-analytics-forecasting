@@ -1,9 +1,8 @@
-from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, case, func, literal_column, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Customer, Order, OrderItem, Product, ProductCategory, Seller
@@ -14,22 +13,39 @@ class AnalyticsRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def _base_query(self, *columns: Any) -> Select[Any]:
-        return (
-            select(*columns)
-            .select_from(Order)
-            .join(Customer, Customer.customer_id == Order.customer_id)
-            .outerjoin(OrderItem, OrderItem.order_id == Order.order_id)
-            .outerjoin(Product, Product.product_id == OrderItem.product_id)
-            .outerjoin(
+    def _query(
+        self,
+        *columns: Any,
+        filters: AnalyticsFilters,
+        customer: bool = False,
+        items: bool = False,
+        product: bool = False,
+        category: bool = False,
+        seller: bool = False,
+    ) -> Select[Any]:
+        """Build only the joins required by a report and its filters."""
+        needs_customer = customer or filters.state is not None
+        needs_product = product or category or filters.category is not None
+        needs_items = items or needs_product or seller or filters.seller_id is not None
+
+        statement = select(*columns).select_from(Order)
+        if needs_customer:
+            statement = statement.join(Customer, Customer.customer_id == Order.customer_id)
+        if needs_items:
+            statement = statement.join(OrderItem, OrderItem.order_id == Order.order_id)
+        if needs_product:
+            statement = statement.join(Product, Product.product_id == OrderItem.product_id)
+        if category:
+            statement = statement.outerjoin(
                 ProductCategory,
                 ProductCategory.category_name == Product.product_category_name,
             )
-            .outerjoin(Seller, Seller.seller_id == OrderItem.seller_id)
-        )
+        if seller:
+            statement = statement.join(Seller, Seller.seller_id == OrderItem.seller_id)
+        return self._apply_filters(statement, filters)
 
+    @staticmethod
     def _apply_filters(
-        self,
         statement: Select[Any],
         filters: AnalyticsFilters,
     ) -> Select[Any]:
@@ -40,9 +56,7 @@ class AnalyticsRepository:
         if filters.state:
             statement = statement.where(Customer.customer_state == filters.state)
         if filters.category:
-            statement = statement.where(
-                Product.product_category_name == filters.category
-            )
+            statement = statement.where(Product.product_category_name == filters.category)
         if filters.seller_id:
             statement = statement.where(OrderItem.seller_id == filters.seller_id)
         return statement
@@ -51,47 +65,75 @@ class AnalyticsRepository:
     def _money(value: Decimal | float | int | None) -> float:
         return round(float(value or 0), 2)
 
-    def overview(self, filters: AnalyticsFilters) -> dict[str, float | int | None]:
-        delivered = self._apply_filters(
-            self._base_query(
-                func.coalesce(func.sum(OrderItem.price), 0),
-                func.count(func.distinct(Order.order_id)),
-                func.count(func.distinct(Customer.customer_unique_id)),
-                func.count(OrderItem.order_item_id),
-                func.coalesce(func.sum(OrderItem.freight_value), 0),
-            ).where(Order.order_status == "delivered"),
-            filters,
+    def _delivery_days(self, purchased: Any, delivered: Any) -> Any:
+        if self.session.get_bind().dialect.name == "sqlite":
+            return func.julianday(delivered) - func.julianday(purchased)
+        return (
+            func.timestampdiff(literal_column("SECOND"), purchased, delivered)
+            / 86400.0
         )
+
+    def _delivery_orders(
+        self,
+        filters: AnalyticsFilters,
+        *,
+        include_state: bool,
+    ) -> Any:
+        columns = [
+            Order.order_id.label("order_id"),
+            Order.order_purchase_timestamp.label("purchased_at"),
+            Order.order_delivered_customer_date.label("delivered_at"),
+            Order.order_estimated_delivery_date.label("estimated_at"),
+        ]
+        if include_state:
+            columns.append(Customer.customer_state.label("state"))
+        return (
+            self._query(
+                *columns,
+                filters=filters,
+                customer=include_state,
+            )
+            .where(Order.order_status == "delivered")
+            .where(Order.order_delivered_customer_date.is_not(None))
+            .distinct()
+            .subquery()
+        )
+
+    def overview(self, filters: AnalyticsFilters) -> dict[str, float | int | None]:
+        delivered = self._query(
+            func.coalesce(func.sum(OrderItem.price), 0),
+            func.count(func.distinct(Order.order_id)),
+            func.count(func.distinct(Customer.customer_unique_id)),
+            func.count(OrderItem.order_item_id),
+            func.coalesce(func.sum(OrderItem.freight_value), 0),
+            filters=filters,
+            customer=True,
+            items=True,
+        ).where(Order.order_status == "delivered")
         revenue, orders, customers, items, freight = self.session.execute(
             delivered
         ).one()
 
         all_orders = self.session.scalar(
-            self._apply_filters(
-                self._base_query(func.count(func.distinct(Order.order_id))),
-                filters,
+            self._query(
+                func.count(func.distinct(Order.order_id)),
+                filters=filters,
             )
         ) or 0
         delivered_orders = int(orders or 0)
 
-        delivery_rows = self.session.execute(
-            self._apply_filters(
-                self._base_query(
-                    Order.order_id,
-                    Order.order_purchase_timestamp,
-                    Order.order_delivered_customer_date,
+        delivery_orders = self._delivery_orders(filters, include_state=False)
+        average_delivery_days = self.session.scalar(
+            select(
+                func.avg(
+                    self._delivery_days(
+                        delivery_orders.c.purchased_at,
+                        delivery_orders.c.delivered_at,
+                    )
                 )
-                .where(Order.order_status == "delivered")
-                .where(Order.order_delivered_customer_date.is_not(None))
-                .distinct(),
-                filters,
-            )
-        ).all()
-        delivery_days = [
-            (delivered_at - purchased_at).total_seconds() / 86400
-            for _, purchased_at, delivered_at in delivery_rows
-            if delivered_at and purchased_at
-        ]
+            ).select_from(delivery_orders)
+        )
+
         revenue_value = self._money(revenue)
         return {
             "revenue": revenue_value,
@@ -105,8 +147,8 @@ class AnalyticsRepository:
             "delivered_rate": round(delivered_orders / int(all_orders) * 100, 1)
             if all_orders
             else 0,
-            "average_delivery_days": round(sum(delivery_days) / len(delivery_days), 1)
-            if delivery_days
+            "average_delivery_days": round(float(average_delivery_days), 1)
+            if average_delivery_days is not None
             else None,
         }
 
@@ -117,73 +159,94 @@ class AnalyticsRepository:
             if dialect == "sqlite"
             else func.date_format(Order.order_purchase_timestamp, "%Y-%m")
         )
-        statement = self._apply_filters(
-            self._base_query(
+        statement = (
+            self._query(
                 period.label("period"),
                 func.coalesce(func.sum(OrderItem.price), 0),
                 func.count(func.distinct(Order.order_id)),
+                filters=filters,
+                items=True,
             )
             .where(Order.order_status == "delivered")
-            .where(Product.product_id.is_not(None)),
-            filters,
-        ).group_by(period).order_by(period)
+            .group_by(period)
+            .order_by(period)
+        )
         return [
             {"period": row[0], "revenue": self._money(row[1]), "orders": int(row[2])}
             for row in self.session.execute(statement)
         ]
 
     def order_statuses(self, filters: AnalyticsFilters) -> list[dict[str, Any]]:
-        statement = self._apply_filters(
-            self._base_query(
-                Order.order_status,
-                func.count(func.distinct(Order.order_id)),
-            ),
-            filters,
-        ).group_by(Order.order_status).order_by(func.count(func.distinct(Order.order_id)).desc())
+        count = func.count(func.distinct(Order.order_id))
+        statement = (
+            self._query(Order.order_status, count, filters=filters)
+            .group_by(Order.order_status)
+            .order_by(count.desc())
+        )
         return [
-            {"label": status, "value": float(count), "orders": int(count)}
-            for status, count in self.session.execute(statement)
+            {"label": status, "value": float(total), "orders": int(total)}
+            for status, total in self.session.execute(statement)
         ]
 
-    def top_categories(self, filters: AnalyticsFilters, limit: int = 8) -> list[dict[str, Any]]:
+    def top_categories(
+        self,
+        filters: AnalyticsFilters,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
         label = func.coalesce(
             ProductCategory.category_name_english,
             Product.product_category_name,
             "Uncategorized",
         )
-        statement = self._apply_filters(
-            self._base_query(
+        revenue = func.sum(OrderItem.price)
+        statement = (
+            self._query(
                 label,
-                func.coalesce(func.sum(OrderItem.price), 0),
+                func.coalesce(revenue, 0),
                 func.count(func.distinct(Order.order_id)),
+                filters=filters,
+                items=True,
+                product=True,
+                category=True,
             )
             .where(Order.order_status == "delivered")
-            .where(Seller.seller_id.is_not(None)),
-            filters,
-        ).group_by(label).order_by(func.sum(OrderItem.price).desc()).limit(limit)
+            .group_by(label)
+            .order_by(revenue.desc())
+            .limit(limit)
+        )
         return [
             {"label": row[0], "value": self._money(row[1]), "orders": int(row[2])}
             for row in self.session.execute(statement)
         ]
 
-    def top_products(self, filters: AnalyticsFilters, limit: int = 8) -> list[dict[str, Any]]:
+    def top_products(
+        self,
+        filters: AnalyticsFilters,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
         category = func.coalesce(
             ProductCategory.category_name_english,
             Product.product_category_name,
             "Uncategorized",
         )
-        statement = self._apply_filters(
-            self._base_query(
+        revenue = func.sum(OrderItem.price)
+        statement = (
+            self._query(
                 Product.product_id,
                 category,
-                func.coalesce(func.sum(OrderItem.price), 0),
+                func.coalesce(revenue, 0),
                 func.count(OrderItem.order_item_id),
                 func.count(func.distinct(Order.order_id)),
+                filters=filters,
+                items=True,
+                product=True,
+                category=True,
             )
             .where(Order.order_status == "delivered")
-            .where(Product.product_id.is_not(None)),
-            filters,
-        ).group_by(Product.product_id, category).order_by(func.sum(OrderItem.price).desc()).limit(limit)
+            .group_by(Product.product_id, category)
+            .order_by(revenue.desc())
+            .limit(limit)
+        )
         return [
             {
                 "product_id": row[0],
@@ -195,19 +258,28 @@ class AnalyticsRepository:
             for row in self.session.execute(statement)
         ]
 
-    def top_sellers(self, filters: AnalyticsFilters, limit: int = 8) -> list[dict[str, Any]]:
-        statement = self._apply_filters(
-            self._base_query(
+    def top_sellers(
+        self,
+        filters: AnalyticsFilters,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        revenue = func.sum(OrderItem.price)
+        statement = (
+            self._query(
                 Seller.seller_id,
                 Seller.seller_city,
                 Seller.seller_state,
-                func.coalesce(func.sum(OrderItem.price), 0),
+                func.coalesce(revenue, 0),
                 func.count(func.distinct(Order.order_id)),
+                filters=filters,
+                items=True,
+                seller=True,
             )
             .where(Order.order_status == "delivered")
-            .where(Seller.seller_id.is_not(None)),
-            filters,
-        ).group_by(Seller.seller_id, Seller.seller_city, Seller.seller_state).order_by(func.sum(OrderItem.price).desc()).limit(limit)
+            .group_by(Seller.seller_id, Seller.seller_city, Seller.seller_state)
+            .order_by(revenue.desc())
+            .limit(limit)
+        )
         return [
             {
                 "seller_id": row[0],
@@ -218,16 +290,27 @@ class AnalyticsRepository:
             for row in self.session.execute(statement)
         ]
 
-    def regions(self, filters: AnalyticsFilters, limit: int = 10) -> list[dict[str, Any]]:
-        statement = self._apply_filters(
-            self._base_query(
+    def regions(
+        self,
+        filters: AnalyticsFilters,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        revenue = func.sum(OrderItem.price)
+        statement = (
+            self._query(
                 Customer.customer_state,
-                func.coalesce(func.sum(OrderItem.price), 0),
+                func.coalesce(revenue, 0),
                 func.count(func.distinct(Order.order_id)),
                 func.count(func.distinct(Customer.customer_unique_id)),
-            ).where(Order.order_status == "delivered"),
-            filters,
-        ).group_by(Customer.customer_state).order_by(func.sum(OrderItem.price).desc()).limit(limit)
+                filters=filters,
+                customer=True,
+                items=True,
+            )
+            .where(Order.order_status == "delivered")
+            .group_by(Customer.customer_state)
+            .order_by(revenue.desc())
+            .limit(limit)
+        )
         return [
             {
                 "state": row[0],
@@ -239,34 +322,37 @@ class AnalyticsRepository:
         ]
 
     def delivery(self, filters: AnalyticsFilters) -> list[dict[str, Any]]:
-        statement = self._apply_filters(
-            self._base_query(
-                Order.order_id,
-                Customer.customer_state,
-                Order.order_purchase_timestamp,
-                Order.order_delivered_customer_date,
-                Order.order_estimated_delivery_date,
-            )
-            .where(Order.order_status == "delivered")
-            .where(Order.order_delivered_customer_date.is_not(None))
-            .distinct(),
-            filters,
+        delivery_orders = self._delivery_orders(filters, include_state=True)
+        days = self._delivery_days(
+            delivery_orders.c.purchased_at,
+            delivery_orders.c.delivered_at,
         )
-        grouped: dict[str, list[tuple[float, bool]]] = defaultdict(list)
-        for _, state, purchased, delivered, estimated in self.session.execute(statement):
-            days = (delivered - purchased).total_seconds() / 86400
-            grouped[state].append((days, delivered <= estimated))
-        result = []
-        for state, rows in grouped.items():
-            result.append(
-                {
-                    "state": state,
-                    "average_days": round(sum(row[0] for row in rows) / len(rows), 1),
-                    "on_time_rate": round(sum(row[1] for row in rows) / len(rows) * 100, 1),
-                    "delivered_orders": len(rows),
-                }
+        on_time = case(
+            (delivery_orders.c.delivered_at <= delivery_orders.c.estimated_at, 1.0),
+            else_=0.0,
+        )
+        delivered_orders = func.count()
+        statement = (
+            select(
+                delivery_orders.c.state,
+                func.avg(days),
+                func.avg(on_time) * 100,
+                delivered_orders,
             )
-        return sorted(result, key=lambda item: item["delivered_orders"], reverse=True)[:10]
+            .select_from(delivery_orders)
+            .group_by(delivery_orders.c.state)
+            .order_by(delivered_orders.desc())
+            .limit(10)
+        )
+        return [
+            {
+                "state": row[0],
+                "average_days": round(float(row[1]), 1),
+                "on_time_rate": round(float(row[2]), 1),
+                "delivered_orders": int(row[3]),
+            }
+            for row in self.session.execute(statement)
+        ]
 
     def filter_options(self) -> dict[str, Any]:
         min_date, max_date = self.session.execute(

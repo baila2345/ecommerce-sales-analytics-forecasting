@@ -30,8 +30,8 @@ CSV_BY_SLUG = {
         "seller-1,13023,campinas,SP\n"
     ),
     "products": (
-        "product_id,product_category_name,product_name_length,"
-        "product_description_length,product_photos_qty,product_weight_g,"
+        "product_id,product_category_name,product_name_lenght,"
+        "product_description_lenght,product_photos_qty,product_weight_g,"
         "product_length_cm,product_height_cm,product_width_cm\n"
         "product-1,new_category,12,100,2,500,20,10,15\n"
     ),
@@ -133,6 +133,10 @@ def test_imports_all_remaining_olist_datasets_in_dependency_order(
     category = db_session.get(ProductCategory, "new_category")
     assert category is not None
     assert category.category_name_english is None
+    product = db_session.get(Product, "product-1")
+    assert product is not None
+    assert product.product_name_length == 12
+    assert product.product_description_length == 100
 
 
 def test_preview_reports_missing_foreign_key_reference(

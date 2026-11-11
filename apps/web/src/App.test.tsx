@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
@@ -196,12 +197,18 @@ describe("analytics dashboard", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    render(<StrictMode><App /></StrictMode>);
 
     expect(await screen.findByRole("heading", { name: "Analytics Dashboard" })).toBeInTheDocument();
     expect((await screen.findAllByText("health_beauty")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("5 ngày").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /Export CSV/ })).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.filter(
+      ([url]) => String(url).includes("/analytics/dashboard"),
+    )).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(
+      ([url]) => String(url).includes("/analytics/filters"),
+    )).toHaveLength(1);
   });
 });

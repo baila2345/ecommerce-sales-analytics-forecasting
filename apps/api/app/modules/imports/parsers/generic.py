@@ -145,7 +145,7 @@ class DatasetCsvParser:
             )
 
         for field in self.dataset.fields:
-            value = raw_row.get(field.name)
+            value = raw_row.get(field.csv_name)
             normalized = value.strip() if isinstance(value, str) else ""
             if not normalized:
                 parsed[field.name] = None
