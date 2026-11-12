@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.db.base import utc_now
 from app.db.models import ImportBatch, ImportStatus, User
+from app.modules.analytics.cache import AnalyticsCache
 from app.modules.imports.domain import (
     ImportCommitOutcome,
     ParsedProductCategories,
@@ -18,6 +19,7 @@ from app.modules.imports.repositories import (
     ImportBatchRepository,
     ProductCategoryRepository,
 )
+from app.modules.datasets.repository import DatasetFoundationRepository
 
 
 DATASET_TYPE = "product_categories"
@@ -94,6 +96,7 @@ class CommitProductCategoriesService:
         batches: ImportBatchRepository,
         categories: ProductCategoryRepository,
         audit_events: AuditEventRepository,
+        analytics_cache: AnalyticsCache | None = None,
     ) -> None:
         self.session = session
         self.file_reader = file_reader
@@ -101,6 +104,7 @@ class CommitProductCategoriesService:
         self.batches = batches
         self.categories = categories
         self.audit_events = audit_events
+        self.analytics_cache = analytics_cache
 
     async def execute(
         self,
@@ -129,7 +133,12 @@ class CommitProductCategoriesService:
                     "imported_rows": imported_rows,
                 },
             )
+            DatasetFoundationRepository(
+                self.session
+            ).mark_ready_snapshots_stale()
             self.session.commit()
+            if self.analytics_cache is not None:
+                self.analytics_cache.invalidate_dashboards()
         except SQLAlchemyError as exc:
             self._record_database_failure(batch_id)
             raise AppError(

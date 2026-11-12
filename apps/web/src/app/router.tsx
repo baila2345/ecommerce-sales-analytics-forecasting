@@ -7,6 +7,7 @@ import { AnalyticsPage } from "../pages/AnalyticsPage";
 import { HomePage } from "../pages/HomePage";
 import { ImportPage } from "../pages/ImportPage";
 import { LoginPage } from "../pages/LoginPage";
+import { ModelLabPage } from "../pages/ModelLabPage";
 
 export function AppRoutes() {
   const { status } = useAuth();
@@ -30,6 +31,7 @@ export function AppRoutes() {
         <Route index element={<HomePage />} />
         <Route path="imports" element={<ImportPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
+        <Route path="model-lab" element={<ModelLabPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

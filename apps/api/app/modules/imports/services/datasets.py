@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.db.base import utc_now
 from app.db.models import ImportBatch, ImportStatus, User
+from app.modules.analytics.cache import AnalyticsCache
 from app.modules.imports.datasets import DatasetSpec
 from app.modules.imports.domain import (
     DatasetInspection,
@@ -20,6 +21,7 @@ from app.modules.imports.repositories import (
     DatasetRepository,
     ImportBatchRepository,
 )
+from app.modules.datasets.repository import DatasetFoundationRepository
 
 
 class PreviewDatasetService:
@@ -136,6 +138,7 @@ class CommitDatasetService:
         batches: ImportBatchRepository,
         data: DatasetRepository,
         audit_events: AuditEventRepository,
+        analytics_cache: AnalyticsCache | None = None,
     ) -> None:
         self.session = session
         self.dataset = dataset
@@ -144,6 +147,7 @@ class CommitDatasetService:
         self.batches = batches
         self.data = data
         self.audit_events = audit_events
+        self.analytics_cache = analytics_cache
 
     async def execute(
         self,
@@ -179,7 +183,12 @@ class CommitDatasetService:
                     "imported_rows": imported_rows,
                 },
             )
+            DatasetFoundationRepository(
+                self.session
+            ).mark_ready_snapshots_stale()
             self.session.commit()
+            if self.analytics_cache is not None:
+                self.analytics_cache.invalidate_dashboards()
         except CsvParsingError as exc:
             self.session.rollback()
             raise AppError(

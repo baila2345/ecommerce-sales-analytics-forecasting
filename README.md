@@ -145,6 +145,11 @@ theo từng dataset. Preview cũng kiểm tra customer/order/product/seller tham
 cũ trong cùng transaction. Các file nhỏ trong thư mục `samples/` có thể dùng để
 test thủ công theo thứ tự trên.
 
+File Products gốc của Olist dùng hai header bị viết sai chính tả
+`product_name_lenght` và `product_description_lenght`. Importer nhận đúng header
+nguồn này và ánh xạ sang các cột chuẩn `product_name_length` và
+`product_description_length` trong MySQL.
+
 ## Analytics Dashboard
 
 Dashboard tại http://localhost:5173/analytics dành cho `admin`, `analyst` và
@@ -165,6 +170,91 @@ Các endpoint:
   seller, khu vực và hiệu suất giao hàng.
 - `GET /api/v1/analytics/filters`: miền giá trị cho bộ lọc.
 - `GET /api/v1/analytics/export`: tải báo cáo CSV theo cùng bộ lọc.
+
+Dashboard chỉ JOIN các bảng cần cho từng báo cáo và tính delivery aggregate trong
+MySQL. Response Dashboard được cache trong Redis 60 giây theo bộ lọc; frontend
+dùng chung request đang chờ để React `StrictMode` không gọi trùng endpoint. Nếu
+Redis không khả dụng, Dashboard vẫn truy vấn database bình thường. Bước tiếp theo
+là chủ động xóa cache sau commit import thay vì chỉ chờ TTL.
+
+## Data Quality
+
+Sau khi import đủ 9 file, tài khoản `admin`, `analyst` hoặc `manager` có thể gọi
+`GET /api/v1/datasets/quality`. Báo cáo chỉ đọc dữ liệu và trả về:
+
+- row count và khoảng thời gian của snapshot;
+- kiểm tra bảng rỗng, khóa ngoại mồ côi và chuỗi timestamp đơn hàng;
+- category/dimensions sản phẩm bị thiếu, giá trị tiền và tọa độ bất thường;
+- đối soát tổng item, freight, payment và số đơn chênh lệch;
+- trạng thái tổng `passed`, `warning` hoặc `failed`, kèm số dòng ảnh hưởng của
+  từng check.
+
+Snapshot Olist hiện tại có đủ 9 bảng và không có khóa ngoại mồ côi. Báo cáo phát
+hiện 8 đơn `delivered` thiếu ngày giao hàng; đây là lỗi chặn cần có chính sách loại
+khỏi chuỗi trưởng thành trước khi dựng `daily_sales`. Các thiếu hụt nguồn khác vẫn
+được giữ dưới dạng warning để quá trình làm sạch có thể truy vết, không sửa dữ liệu
+gốc im lặng.
+
+Chính sách `olist-ml-quality-v1` giữ dữ liệu nguồn và tạo tập đủ điều kiện riêng:
+chỉ nhận đơn `delivered` có item, có ngày giao và ngày giao không trước ngày mua.
+Snapshot hiện giữ 96.470/96.478 đơn delivered; 8 đơn và 8 item, tương ứng
+`1.249,18` doanh thu, bị loại khỏi ML. Có 197 đơn không được dùng cho feature thời
+gian giao hàng; 610 sản phẩm thiếu category được chiếu thành `unknown`. API trả
+`ready_for_daily_sales=true`, nên có thể dựng aggregate mà không cần sửa/xóa raw.
+
+## Dataset fingerprint và daily sales
+
+Migration `0003` tạo `dataset_snapshots` và `daily_sales`. Fingerprint SHA-256
+được tính xác định từ checksum mới nhất của đủ 9 dataset, `daily-sales-v2`,
+`olist-ml-quality-v1`, lịch nguồn, khoảng ngày và `maturity_days`. Timestamp chạy
+job không tham gia fingerprint nên cùng input luôn sinh cùng ID dữ liệu.
+
+Các endpoint dành cho `admin`/`analyst`; `manager` được quyền đọc:
+
+- `GET /api/v1/datasets/fingerprint?maturity_days=30`: xem fingerprint trước khi
+  build.
+- `POST /api/v1/datasets/daily-sales/rebuild?maturity_days=30`: chạy quality gate,
+  tạo/cập nhật snapshot và điền đủ lịch ngày.
+- `GET /api/v1/datasets/snapshots/latest`: xem snapshot mới nhất cùng reconciliation.
+
+Ngày không có đơn được lưu với revenue/orders/customer/items bằng `0`, AOV là
+`null`. Snapshot mới sẽ là `ready`; khi bất kỳ nguồn nào được import lại, snapshot
+`ready` tự chuyển thành `stale`. `daily-sales-v2` cũng chặn phần đuôi giả bằng
+cách không cho mature cutoff vượt quá ngày mua cuối có đơn delivered hợp lệ.
+Phân phối giao hàng hiện tại có P95 là 29 ngày, vì vậy snapshot dùng
+`maturity_days=30` và cho kết quả:
+
+- fingerprint `3f851c685e1c5f7bdd6ad779c133487c101aab0c0336fa7893e1ea9840718dec`;
+- 774 ngày từ 04/09/2016 đến 17/10/2018, trong đó 725 ngày mature đến 29/08/2018;
+- 96.470 order, 110.189 item và revenue `13.220.248,93`.
+
+## Baseline M0
+
+Migration `0004` tạo `model_runs` và `backtest_folds`. Endpoint
+`POST /api/v1/models/backtests` chạy Seasonal Naive chu kỳ 7 ngày; endpoint
+`GET /api/v1/models/runs/{id}` đọc lại đầy đủ run/fold và
+`GET /api/v1/models/runs/latest` lấy run M0 mới nhất. Backtest dùng expanding
+window, không đọc actual tương lai khi dự báo nhiều bước và không dùng holdout
+cuối 90 ngày trong tuning.
+
+Frontend `/model-lab` cho phép admin/analyst cấu hình và chạy M0, đồng thời hiển
+thị fingerprint, quality policy, MAE/RMSE/WAPE, biểu đồ actual–prediction và
+metric từng fold. Manager có quyền xem kết quả nhưng không được khởi chạy run.
+
+Run M0 đầu tiên dùng horizon/step 30 ngày, có 9 fold và giữ kín holdout
+01/06–29/08/2018. Kết quả validation: MAE trung bình `9.497,66`, RMSE
+`12.441,22`, WAPE `34,75%`. Holdout chưa được đánh giá và chỉ mở sau khi đã so
+sánh/chọn model. Import thành công cũng chủ động xóa cache Analytics; lỗi Redis
+không làm hỏng transaction import.
+
+## Kế hoạch phát triển tiếp theo
+
+1. Thêm worker cho model job dài và mở rộng Model Lab với SARIMA M1 trên cùng fold.
+2. Triển khai LightGBM direct, Orders × AOV và ensemble M2–M4.
+3. So sánh M0–M4, chốt model trước khi mở holdout 90 ngày.
+4. Thêm train final, quantile, Forecast API và Forecast Center.
+
+Chi tiết và trạng thái từng gate nằm trong `docs/TECH_PLAN_CODE.md`.
 
 ## Authentication
 

@@ -6,6 +6,9 @@ from app.core.errors import install_error_handlers
 from app.core.middleware import RequestIdMiddleware
 from app.modules.analytics.router import router as analytics_router
 from app.modules.auth.router import router as auth_router
+from app.modules.backtests.router import router as backtests_router
+from app.modules.data_quality.router import router as data_quality_router
+from app.modules.datasets.router import router as datasets_router
 from app.modules.imports.router import router as imports_router
 
 
@@ -30,6 +33,9 @@ def create_app() -> FastAPI:
     application.include_router(auth_router, prefix="/api/v1")
     application.include_router(imports_router, prefix="/api/v1")
     application.include_router(analytics_router, prefix="/api/v1")
+    application.include_router(data_quality_router, prefix="/api/v1")
+    application.include_router(datasets_router, prefix="/api/v1")
+    application.include_router(backtests_router, prefix="/api/v1")
 
     @application.get("/health", tags=["system"])
     def health() -> dict[str, str]:

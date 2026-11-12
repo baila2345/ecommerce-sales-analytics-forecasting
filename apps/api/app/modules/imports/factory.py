@@ -2,6 +2,8 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
+from app.modules.analytics.cache import AnalyticsCache
 from app.modules.imports.file_reader import CsvUploadReader
 from app.modules.imports.datasets import DatasetSpec
 from app.modules.imports.parsers.generic import DatasetCsvParser
@@ -44,6 +46,7 @@ def build_product_category_import_services(
     parser = ProductCategoryCsvParser(preview_row_limit=5)
     batches = ImportBatchRepository(session)
     audit_events = AuditEventRepository(session)
+    analytics_cache = AnalyticsCache(get_settings().redis_url)
 
     return ProductCategoryImportServices(
         preview=PreviewProductCategoriesService(
@@ -60,6 +63,7 @@ def build_product_category_import_services(
             batches=batches,
             categories=ProductCategoryRepository(session),
             audit_events=audit_events,
+            analytics_cache=analytics_cache,
         ),
     )
 
@@ -73,6 +77,7 @@ def build_dataset_import_services(
     batches = ImportBatchRepository(session)
     data = DatasetRepository(session)
     audit_events = AuditEventRepository(session)
+    analytics_cache = AnalyticsCache(get_settings().redis_url)
     return DatasetImportServices(
         preview=PreviewDatasetService(
             session,
@@ -91,5 +96,6 @@ def build_dataset_import_services(
             batches,
             data,
             audit_events,
+            analytics_cache,
         ),
     )

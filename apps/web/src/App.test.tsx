@@ -212,3 +212,106 @@ describe("analytics dashboard", () => {
     )).toHaveLength(1);
   });
 });
+
+describe("M0 Model Lab", () => {
+  it("loads the latest run and starts a reproducible backtest", async () => {
+    window.history.replaceState({}, "", "/model-lab");
+    sessionStorage.setItem("sales_analytics_access_token", "existing-token");
+    const snapshot = {
+      id: 2,
+      fingerprint: "a".repeat(64),
+      status: "ready",
+      source_checksums: {},
+      rules_version: "daily-sales-v2",
+      quality_policy_version: "olist-ml-quality-v1",
+      source_timezone: "source-local-brazil",
+      maturity_days: 30,
+      source_min_date: "2016-09-04",
+      source_max_date: "2018-10-17",
+      mature_until: "2018-08-29",
+      daily_sales_days: 725,
+      mature_days: 725,
+      sales_value: 1000000,
+      orders_count: 90000,
+      customer_days: 90000,
+      items_count: 100000,
+      created_at: "2026-11-12T00:00:00",
+      completed_at: "2026-11-12T00:01:00",
+    };
+    const makeRun = (id: number) => ({
+      id,
+      model_code: "M0",
+      status: "succeeded",
+      dataset_fingerprint: snapshot.fingerprint,
+      snapshot_id: snapshot.id,
+      horizon_days: 30,
+      holdout_from: "2018-06-01",
+      holdout_to: "2018-08-29",
+      holdout_evaluated: false,
+      fold_count: 1,
+      metrics: {
+        mae_mean: 9497.66,
+        mae_std: 0,
+        rmse_mean: 12441.22,
+        rmse_std: 0,
+        wape_mean: 34.75,
+        wape_std: 0,
+      },
+      folds: [{
+        fold_no: 1,
+        origin_date: "2018-05-01",
+        train_from: "2016-09-04",
+        train_to: "2018-04-30",
+        test_from: "2018-05-01",
+        test_to: "2018-05-30",
+        metrics: {
+          mae: 9497.66,
+          rmse: 12441.22,
+          wape: 34.75,
+          actual_sum: 100000,
+          prediction_sum: 95000,
+        },
+        predictions: [
+          { date: "2018-05-01", actual: 3000, predicted: 2800 },
+          { date: "2018-05-02", actual: 3500, predicted: 3200 },
+        ],
+      }],
+      created_at: "2026-11-12T00:00:00",
+      completed_at: "2026-11-12T00:00:02",
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return Promise.resolve(jsonResponse(userProfile));
+      if (url.includes("/datasets/snapshots/latest")) return Promise.resolve(jsonResponse(snapshot));
+      if (url.includes("/models/runs/latest")) return Promise.resolve(jsonResponse(makeRun(1)));
+      if (url.includes("/models/backtests") && init?.method === "POST") {
+        return Promise.resolve(jsonResponse(makeRun(2)));
+      }
+      return Promise.resolve(jsonResponse({}, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Model Lab" })).toBeInTheDocument();
+    expect(await screen.findByText("Kết quả M0 · Run #1")).toBeInTheDocument();
+    expect(screen.getAllByText("34,75%").length).toBeGreaterThan(0);
+    expect(screen.getByText("Holdout đang được khóa")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Chạy backtest M0" }));
+
+    expect(await screen.findByText("Kết quả M0 · Run #2")).toBeInTheDocument();
+    const postCall = fetchMock.mock.calls.find(
+      ([url, options]) => String(url).includes("/models/backtests") && options?.method === "POST",
+    );
+    expect(postCall).toBeDefined();
+    expect(JSON.parse(String(postCall?.[1]?.body))).toMatchObject({
+      model_code: "M0",
+      dataset_fingerprint: snapshot.fingerprint,
+      horizon_days: 30,
+      holdout_days: 90,
+      season_length: 7,
+    });
+  });
+});

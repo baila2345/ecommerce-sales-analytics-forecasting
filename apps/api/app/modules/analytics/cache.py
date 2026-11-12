@@ -30,3 +30,11 @@ class AnalyticsCache:
             self.client.setex(key, ttl_seconds, value)
         except RedisError:
             pass
+
+    def invalidate_dashboards(self) -> None:
+        try:
+            keys = list(self.client.scan_iter(match="analytics:dashboard:v1:*"))
+            if keys:
+                self.client.delete(*keys)
+        except RedisError:
+            pass

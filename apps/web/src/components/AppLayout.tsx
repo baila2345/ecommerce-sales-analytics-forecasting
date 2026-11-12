@@ -32,6 +32,7 @@ export function AppLayout() {
           )}
           <p className="sidebar__section-label sidebar__section-label--spaced">Phân tích</p>
           <NavLink className={({ isActive }) => `nav-item${isActive ? " nav-item--active" : ""}`} to="/analytics"><span aria-hidden="true">▥</span>Dashboard<small className="nav-done">Mới</small></NavLink>
+          <NavLink className={({ isActive }) => `nav-item${isActive ? " nav-item--active" : ""}`} to="/model-lab"><span aria-hidden="true">⌬</span>Model Lab<small className="nav-done">M0</small></NavLink>
           <span className="nav-item nav-item--disabled"><span aria-hidden="true">⌁</span>Dự báo</span>
         </nav>
         <div className="sidebar__footer">
