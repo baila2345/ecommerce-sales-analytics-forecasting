@@ -214,10 +214,7 @@ describe("analytics dashboard", () => {
 });
 
 describe("M0 Model Lab", () => {
-  it("loads the latest run and starts a reproducible backtest", async () => {
-    window.history.replaceState({}, "", "/model-lab");
-    sessionStorage.setItem("sales_analytics_access_token", "existing-token");
-    const snapshot = {
+  const snapshot = {
       id: 2,
       fingerprint: "a".repeat(64),
       status: "ready",
@@ -237,14 +234,22 @@ describe("M0 Model Lab", () => {
       items_count: 100000,
       created_at: "2026-11-12T00:00:00",
       completed_at: "2026-11-12T00:01:00",
-    };
-    const makeRun = (id: number, status = "succeeded") => ({
+  };
+  const makeRun = (
+    id: number,
+    status = "succeeded",
+    overrides: Record<string, unknown> = {},
+  ) => ({
       id,
       model_code: "M0",
       status,
       dataset_fingerprint: snapshot.fingerprint,
       snapshot_id: snapshot.id,
       horizon_days: 30,
+      holdout_days: 90,
+      min_train_days: 365,
+      step_days: 30,
+      experiment_key: "c".repeat(64),
       holdout_from: "2018-06-01",
       holdout_to: "2018-08-29",
       holdout_evaluated: false,
@@ -277,11 +282,21 @@ describe("M0 Model Lab", () => {
         ],
       }] : [],
       job_id: `job-${id}`,
-      error: null,
+      error: status === "failed" ? {
+        code: "BACKTEST_FOLD_FAILED",
+        message: "optimizer failed",
+        stage: "fold",
+        fold_no: 2,
+      } : null,
       created_at: "2026-11-12T00:00:00",
       started_at: status === "queued" ? null : "2026-11-12T00:00:01",
-      completed_at: status === "succeeded" ? "2026-11-12T00:00:02" : null,
+      completed_at: ["succeeded", "failed"].includes(status) ? "2026-11-12T00:00:02" : null,
+      ...overrides,
     });
+
+  it("loads the latest run and polls a queued backtest", async () => {
+    window.history.replaceState({}, "", "/model-lab");
+    sessionStorage.setItem("sales_analytics_access_token", "existing-token");
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/auth/me")) return Promise.resolve(jsonResponse(userProfile));
@@ -325,5 +340,49 @@ describe("M0 Model Lab", () => {
       sarima_order: [1, 1, 1],
       sarima_seasonal_order: [1, 0, 1, 7],
     });
+    expect(fetchMock.mock.calls.some(
+      ([url]) => String(url).includes("dataset_fingerprint=")
+        && String(url).includes("holdout_days=90")
+        && String(url).includes("min_train_days=365"),
+    )).toBe(true);
+  });
+
+  it("renders the persisted fold error from a failed worker run", async () => {
+    window.history.replaceState({}, "", "/model-lab");
+    sessionStorage.setItem("sales_analytics_access_token", "existing-token");
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return Promise.resolve(jsonResponse(userProfile));
+      if (url.includes("/datasets/snapshots/latest")) return Promise.resolve(jsonResponse(snapshot));
+      if (url.includes("model_code=M0")) return Promise.resolve(jsonResponse(makeRun(3, "failed")));
+      return Promise.resolve(jsonResponse({ error: { code: "MODEL_RUN_NOT_FOUND", message: "not found" } }, 404));
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("M0 chạy thất bại tại fold #2");
+    expect(screen.getByRole("alert")).toHaveTextContent("optimizer failed");
+  });
+
+  it("refuses to rank runs with different experiment signatures", async () => {
+    window.history.replaceState({}, "", "/model-lab");
+    sessionStorage.setItem("sales_analytics_access_token", "existing-token");
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return Promise.resolve(jsonResponse(userProfile));
+      if (url.includes("/datasets/snapshots/latest")) return Promise.resolve(jsonResponse(snapshot));
+      if (url.includes("model_code=M0")) return Promise.resolve(jsonResponse(makeRun(4)));
+      if (url.includes("model_code=M1")) return Promise.resolve(jsonResponse(makeRun(5, "succeeded", {
+        model_code: "M1",
+        horizon_days: 7,
+      })));
+      return Promise.resolve(jsonResponse({}, 404));
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Không thể xếp hạng: M0 và M1 không cùng cấu hình thí nghiệm.",
+    );
   });
 });

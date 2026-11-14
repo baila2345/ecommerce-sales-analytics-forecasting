@@ -2,6 +2,7 @@ from typing import Protocol
 
 from redis import Redis
 from rq import Queue
+from rq.serializers import JSONSerializer
 
 from app.core.config import get_settings
 
@@ -16,7 +17,11 @@ class BacktestDispatcher(Protocol):
 class RQBacktestDispatcher:
     def __init__(self) -> None:
         connection = Redis.from_url(get_settings().redis_url)
-        self.queue = Queue(BACKTEST_QUEUE, connection=connection)
+        self.queue = Queue(
+            BACKTEST_QUEUE,
+            connection=connection,
+            serializer=JSONSerializer,
+        )
 
     def enqueue(self, run_id: int) -> str:
         from app.modules.backtests.jobs import execute_backtest_job

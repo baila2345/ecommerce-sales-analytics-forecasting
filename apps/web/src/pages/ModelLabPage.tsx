@@ -64,14 +64,35 @@ export function ModelLabPage() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      getLatestSnapshot(),
-      getLatestRun("M0"),
-      getLatestRun("M1"),
-    ])
-      .then(([snapshotResponse, m0, m1]) => {
+    getLatestSnapshot()
+      .then((snapshotResponse) => {
         if (!active) return;
         setSnapshot(snapshotResponse);
+      })
+      .catch((requestError) => {
+        if (active) {
+          setError(errorMessage(requestError));
+          setLoading(false);
+        }
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!snapshot) return;
+    let active = true;
+    const filter = {
+      dataset_fingerprint: snapshot.fingerprint,
+      ...config,
+    };
+    setRuns({});
+    setLoading(true);
+    Promise.all([
+      getLatestRun("M0", filter),
+      getLatestRun("M1", filter),
+    ])
+      .then(([m0, m1]) => {
+        if (!active) return;
         setRuns({ ...(m0 ? { M0: m0 } : {}), ...(m1 ? { M1: m1 } : {}) });
       })
       .catch((requestError) => {
@@ -81,7 +102,15 @@ export function ModelLabPage() {
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, []);
+  }, [
+    snapshot?.fingerprint,
+    config.horizon_days,
+    config.holdout_days,
+    config.min_train_days,
+    config.step_days,
+    config.season_length,
+    config.sarima_maxiter,
+  ]);
 
   const activeRun = runs[modelCode] ?? null;
   const pendingRun = Object.values(runs).find(
@@ -201,10 +230,18 @@ export function ModelLabPage() {
 
 function ModelComparison({ runs, activeModel, onSelect }: { runs: Partial<Record<ModelCode, BacktestRun>>; activeModel: ModelCode; onSelect: (model: ModelCode) => void }) {
   if (!runs.M0 && !runs.M1) return null;
+  const comparable = !runs.M0 || !runs.M1 || (
+    runs.M0.dataset_fingerprint === runs.M1.dataset_fingerprint
+    && runs.M0.horizon_days === runs.M1.horizon_days
+    && runs.M0.holdout_days === runs.M1.holdout_days
+    && runs.M0.min_train_days === runs.M1.min_train_days
+    && runs.M0.step_days === runs.M1.step_days
+  );
   return (
     <section className="analytics-panel model-comparison-panel">
-      <div className="model-panel-heading"><div><span>Leaderboard</span><h2>So sánh trên validation</h2></div><small>Cùng fingerprint mới có ý nghĩa</small></div>
-      <div className="model-table-wrap"><table className="model-fold-table model-comparison-table"><thead><tr><th>Model</th><th>Trạng thái</th><th>MAE</th><th>RMSE</th><th>WAPE</th><th>Folds</th></tr></thead><tbody>{(["M0", "M1"] as ModelCode[]).map((code) => { const run = runs[code]; return <tr className={activeModel === code ? "is-selected" : ""} key={code}><td><button type="button" onClick={() => onSelect(code)}>{code}</button></td><td><RunState status={run?.status ?? "—"} /></td><td>{run?.metrics ? currency.format(run.metrics.mae_mean) : "—"}</td><td>{run?.metrics ? currency.format(run.metrics.rmse_mean) : "—"}</td><td>{run?.metrics?.wape_mean == null ? "—" : `${number.format(run.metrics.wape_mean)}%`}</td><td>{run?.fold_count ?? "—"}</td></tr>; })}</tbody></table></div>
+      <div className="model-panel-heading"><div><span>Leaderboard</span><h2>So sánh trên validation</h2></div><small>Cùng fingerprint và cấu hình fold</small></div>
+      {!comparable && <div className="model-stale-warning" role="alert">Không thể xếp hạng: M0 và M1 không cùng cấu hình thí nghiệm.</div>}
+      <div className="model-table-wrap"><table className="model-fold-table model-comparison-table"><thead><tr><th>Model</th><th>Trạng thái</th><th>MAE</th><th>RMSE</th><th>WAPE</th><th>Folds</th></tr></thead><tbody>{(["M0", "M1"] as ModelCode[]).map((code) => { const run = runs[code]; const metrics = comparable ? run?.metrics : null; return <tr className={activeModel === code ? "is-selected" : ""} key={code}><td><button type="button" onClick={() => onSelect(code)}>{code}</button></td><td><RunState status={run?.status ?? "—"} /></td><td>{metrics ? currency.format(metrics.mae_mean) : "—"}</td><td>{metrics ? currency.format(metrics.rmse_mean) : "—"}</td><td>{metrics?.wape_mean == null ? "—" : `${number.format(metrics.wape_mean)}%`}</td><td>{comparable ? run?.fold_count ?? "—" : "—"}</td></tr>; })}</tbody></table></div>
     </section>
   );
 }

@@ -7,12 +7,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
+from app.db.base import utc_now
 from app.db.models import (
     BacktestFold,
     DailySale,
     DatasetSnapshot,
     DatasetSnapshotStatus,
     ModelRun,
+    ModelRunStatus,
     User,
     UserRole,
 )
@@ -275,3 +277,151 @@ def test_m1_fold_failure_is_persisted(
     assert body["error"]["code"] == "BACKTEST_FOLD_FAILED"
     assert body["error"]["fold_no"] == 2
     assert body["completed_at"] is not None
+
+
+def test_identical_backtest_request_reuses_the_existing_run(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
+    token = seed_backtest_snapshot(db_session)
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {
+        "model_code": "M0",
+        "dataset_fingerprint": "a" * 64,
+        "horizon_days": 30,
+        "holdout_days": 90,
+        "min_train_days": 365,
+        "step_days": 30,
+        "season_length": 7,
+    }
+
+    first = client.post("/api/v1/models/backtests", headers=headers, json=payload)
+    second = client.post("/api/v1/models/backtests", headers=headers, json=payload)
+
+    assert first.status_code == second.status_code == 202
+    assert first.json()["id"] == second.json()["id"]
+    assert first.json()["experiment_key"] == second.json()["experiment_key"]
+    assert dispatcher.run_ids == [first.json()["id"]]
+    assert db_session.scalar(select(func.count()).select_from(ModelRun)) == 1
+
+
+def test_stale_running_backtest_is_failed_and_can_be_retried(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
+    token = seed_backtest_snapshot(db_session)
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {
+        "model_code": "M1",
+        "dataset_fingerprint": "a" * 64,
+        "horizon_days": 30,
+        "holdout_days": 90,
+        "min_train_days": 365,
+        "step_days": 30,
+    }
+    queued = client.post(
+        "/api/v1/models/backtests", headers=headers, json=payload
+    ).json()
+    run = db_session.get(ModelRun, queued["id"])
+    assert run is not None
+    run.status = ModelRunStatus.RUNNING.value
+    run.started_at = utc_now() - timedelta(minutes=66)
+    db_session.commit()
+
+    expired = client.get(
+        f"/api/v1/models/runs/{queued['id']}", headers=headers
+    )
+
+    assert expired.status_code == 200
+    assert expired.json()["status"] == "failed"
+    assert expired.json()["error"]["code"] == "STALE_MODEL_RUN"
+    assert expired.json()["experiment_key"] is None
+
+    retried = client.post(
+        "/api/v1/models/backtests", headers=headers, json=payload
+    )
+    assert retried.status_code == 202
+    assert retried.json()["id"] != queued["id"]
+
+
+def test_latest_run_can_be_filtered_by_complete_experiment_signature(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
+    token = seed_backtest_snapshot(db_session)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = {
+        "model_code": "M0",
+        "dataset_fingerprint": "a" * 64,
+        "holdout_days": 90,
+        "min_train_days": 365,
+        "step_days": 30,
+        "season_length": 7,
+    }
+    h7 = client.post(
+        "/api/v1/models/backtests",
+        headers=headers,
+        json={**base, "horizon_days": 7},
+    ).json()
+    h30 = client.post(
+        "/api/v1/models/backtests",
+        headers=headers,
+        json={**base, "horizon_days": 30},
+    ).json()
+
+    response = client.get(
+        "/api/v1/models/runs/latest",
+        headers=headers,
+        params={
+            "model_code": "M0",
+            "dataset_fingerprint": "a" * 64,
+            "horizon_days": 7,
+            "holdout_days": 90,
+            "min_train_days": 365,
+            "step_days": 30,
+            "season_length": 7,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == h7["id"]
+    assert response.json()["id"] != h30["id"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sarima_order", [-1, 1, 1]),
+        ("sarima_order", [6, 1, 1]),
+        ("sarima_seasonal_order", [1, 0, 1, 1]),
+        ("sarima_seasonal_order", [4, 0, 1, 7]),
+    ],
+)
+def test_invalid_sarima_parameters_are_rejected_before_queueing(
+    client: TestClient,
+    db_session: Session,
+    field: str,
+    value: list[int],
+) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
+    token = seed_backtest_snapshot(db_session)
+
+    response = client.post(
+        "/api/v1/models/backtests",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "model_code": "M1",
+            "dataset_fingerprint": "a" * 64,
+            field: value,
+        },
+    )
+
+    assert response.status_code == 422
+    assert dispatcher.run_ids == []

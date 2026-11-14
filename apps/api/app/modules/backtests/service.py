@@ -1,4 +1,9 @@
+from datetime import timedelta
+from hashlib import sha256
+import json
+
 from fastapi import status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -24,6 +29,9 @@ from app.modules.backtests.types import BacktestResult, FoldExecutionError
 
 
 class BacktestService:
+    MODEL_VERSIONS = {"M0": "seasonal-naive-v1", "M1": "sarima-v1"}
+    RUN_TIMEOUT = timedelta(minutes=65)
+
     def __init__(
         self,
         session: Session,
@@ -36,6 +44,9 @@ class BacktestService:
     def enqueue(
         self, request: BacktestRequest, user: User
     ) -> BacktestRunResponse:
+        if self.dispatcher is None:
+            raise RuntimeError("A backtest dispatcher is required to enqueue a run")
+        self._expire_stale_runs()
         snapshot = self.repository.ready_snapshot(request.dataset_fingerprint)
         if snapshot is None:
             raise AppError(
@@ -58,6 +69,11 @@ class BacktestService:
                 message=str(exc),
             ) from exc
 
+        experiment_key = self._experiment_key(snapshot.fingerprint, request)
+        existing = self.repository.run_by_experiment_key(experiment_key)
+        if existing is not None:
+            return self._response(existing)
+
         run = ModelRun(
             snapshot_id=snapshot.id,
             dataset_fingerprint=snapshot.fingerprint,
@@ -66,15 +82,21 @@ class BacktestService:
             horizon_days=request.horizon_days,
             status=ModelRunStatus.QUEUED.value,
             config_json=request.model_dump(mode="json"),
+            experiment_key=experiment_key,
             holdout_from=holdout[0].date,
             holdout_to=holdout[-1].date,
             created_by_id=user.id,
         )
         self.session.add(run)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            existing = self.repository.run_by_experiment_key(experiment_key)
+            if existing is None:
+                raise
+            return self._response(existing)
 
-        if self.dispatcher is None:
-            raise RuntimeError("A backtest dispatcher is required to enqueue a run")
         try:
             run.job_id = self.dispatcher.enqueue(run.id)
             self.session.commit()
@@ -83,6 +105,7 @@ class BacktestService:
             failed_run = self.repository.get_run(run.id)
             assert failed_run is not None
             failed_run.status = ModelRunStatus.FAILED.value
+            failed_run.experiment_key = None
             failed_run.error_json = {
                 "code": "QUEUE_UNAVAILABLE",
                 "message": str(exc),
@@ -127,6 +150,7 @@ class BacktestService:
             failed_run = self.repository.get_run(run_id)
             assert failed_run is not None
             failed_run.status = ModelRunStatus.FAILED.value
+            failed_run.experiment_key = None
             failed_run.error_json = {
                 "code": "BACKTEST_FOLD_FAILED"
                 if isinstance(exc, FoldExecutionError)
@@ -201,6 +225,7 @@ class BacktestService:
         )
 
     def get_run(self, run_id: int) -> BacktestRunResponse:
+        self._expire_stale_runs()
         run = self.repository.get_run(run_id)
         if run is None:
             raise AppError(
@@ -210,8 +235,29 @@ class BacktestService:
             )
         return self._response(run)
 
-    def latest_run(self, model_code: str = "M0") -> BacktestRunResponse:
-        run = self.repository.latest_run(model_code)
+    def latest_run(
+        self,
+        model_code: str = "M0",
+        *,
+        dataset_fingerprint: str | None = None,
+        horizon_days: int | None = None,
+        holdout_days: int | None = None,
+        min_train_days: int | None = None,
+        step_days: int | None = None,
+        season_length: int | None = None,
+        sarima_maxiter: int | None = None,
+    ) -> BacktestRunResponse:
+        self._expire_stale_runs()
+        run = self.repository.latest_matching_run(
+            model_code=model_code,
+            dataset_fingerprint=dataset_fingerprint,
+            horizon_days=horizon_days,
+            holdout_days=holdout_days,
+            min_train_days=min_train_days,
+            step_days=step_days,
+            season_length=season_length,
+            sarima_maxiter=sarima_maxiter,
+        )
         if run is None:
             raise AppError(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -219,6 +265,49 @@ class BacktestService:
                 message="Model run was not found",
             )
         return self._response(run)
+
+    def _expire_stale_runs(self) -> None:
+        cutoff = utc_now() - self.RUN_TIMEOUT
+        stale_runs = self.repository.stale_running_runs(cutoff)
+        if not stale_runs:
+            return
+        for run in stale_runs:
+            run.status = ModelRunStatus.FAILED.value
+            run.experiment_key = None
+            run.completed_at = utc_now()
+            run.error_json = {
+                "code": "STALE_MODEL_RUN",
+                "message": "The worker did not finish this run before its timeout",
+                "stage": "worker",
+                "fold_no": None,
+            }
+        self.session.commit()
+
+    @classmethod
+    def _experiment_key(
+        cls, dataset_fingerprint: str, request: BacktestRequest
+    ) -> str:
+        common = {
+            "dataset_fingerprint": dataset_fingerprint,
+            "model_code": request.model_code,
+            "model_version": cls.MODEL_VERSIONS[request.model_code],
+            "horizon_days": request.horizon_days,
+            "holdout_days": request.holdout_days,
+            "min_train_days": request.min_train_days,
+            "step_days": request.step_days,
+        }
+        if request.model_code == "M0":
+            common["season_length"] = request.season_length
+        else:
+            common.update(
+                {
+                    "sarima_order": request.sarima_order,
+                    "sarima_seasonal_order": request.sarima_seasonal_order,
+                    "sarima_maxiter": request.sarima_maxiter,
+                }
+            )
+        canonical = json.dumps(common, sort_keys=True, separators=(",", ":"))
+        return sha256(canonical.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _response(run: ModelRun) -> BacktestRunResponse:
@@ -230,6 +319,10 @@ class BacktestService:
             dataset_fingerprint=run.dataset_fingerprint,
             snapshot_id=run.snapshot_id,
             horizon_days=run.horizon_days,
+            holdout_days=int(run.config_json["holdout_days"]),
+            min_train_days=int(run.config_json["min_train_days"]),
+            step_days=int(run.config_json["step_days"]),
+            experiment_key=run.experiment_key,
             holdout_from=run.holdout_from,
             holdout_to=run.holdout_to,
             holdout_evaluated=False,

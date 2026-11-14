@@ -40,7 +40,7 @@ services:
   redis:
     image: redis:7.4-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -98,7 +98,7 @@ services:
     environment:
       PYTHONPATH: /app
       TZ: UTC
-    command: rq worker --url redis://redis:6379/0 model-backtests
+    command: rq worker --serializer json --url redis://redis:6379/0 model-backtests
     volumes:
       - ./apps/api:/app
     depends_on:

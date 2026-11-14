@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -48,6 +50,60 @@ class BacktestRepository:
             .order_by(ModelRun.created_at.desc(), ModelRun.id.desc())
             .limit(1)
             .options(selectinload(ModelRun.folds))
+        )
+
+    def latest_matching_run(
+        self,
+        *,
+        model_code: str,
+        dataset_fingerprint: str | None = None,
+        horizon_days: int | None = None,
+        holdout_days: int | None = None,
+        min_train_days: int | None = None,
+        step_days: int | None = None,
+        season_length: int | None = None,
+        sarima_maxiter: int | None = None,
+    ) -> ModelRun | None:
+        statement = select(ModelRun).where(ModelRun.model_code == model_code)
+        if dataset_fingerprint is not None:
+            statement = statement.where(
+                ModelRun.dataset_fingerprint == dataset_fingerprint
+            )
+        if horizon_days is not None:
+            statement = statement.where(ModelRun.horizon_days == horizon_days)
+        for name, value in (
+            ("holdout_days", holdout_days),
+            ("min_train_days", min_train_days),
+            ("step_days", step_days),
+            ("season_length", season_length),
+            ("sarima_maxiter", sarima_maxiter),
+        ):
+            if value is not None:
+                statement = statement.where(
+                    ModelRun.config_json[name].as_integer() == value
+                )
+        return self.session.scalar(
+            statement.order_by(ModelRun.created_at.desc(), ModelRun.id.desc())
+            .limit(1)
+            .options(selectinload(ModelRun.folds))
+        )
+
+    def run_by_experiment_key(self, experiment_key: str) -> ModelRun | None:
+        return self.session.scalar(
+            select(ModelRun)
+            .where(ModelRun.experiment_key == experiment_key)
+            .options(selectinload(ModelRun.folds))
+        )
+
+    def stale_running_runs(self, cutoff: datetime) -> list[ModelRun]:
+        return list(
+            self.session.scalars(
+                select(ModelRun).where(
+                    ModelRun.status == "running",
+                    ModelRun.started_at.is_not(None),
+                    ModelRun.started_at < cutoff,
+                )
+            ).all()
         )
 
     def add_fold(

@@ -42,6 +42,7 @@ class ModelRun(Base):
         ),
         CheckConstraint("horizon_days IN (7, 30)", name="horizon_days"),
         Index("ix_model_runs_snapshot_created", "snapshot_id", "created_at"),
+        UniqueConstraint("experiment_key", name="uq_model_runs_experiment_key"),
     )
 
     id: Mapped[int] = mapped_column(
@@ -63,6 +64,7 @@ class ModelRun(Base):
     horizon_days: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     config_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    experiment_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     metrics_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

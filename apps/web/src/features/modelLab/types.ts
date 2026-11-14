@@ -68,6 +68,10 @@ export type BacktestRun = {
   dataset_fingerprint: string;
   snapshot_id: number;
   horizon_days: number;
+  holdout_days: number;
+  min_train_days: number;
+  step_days: number;
+  experiment_key: string | null;
   holdout_from: string;
   holdout_to: string;
   holdout_evaluated: boolean;

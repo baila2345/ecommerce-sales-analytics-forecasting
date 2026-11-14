@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class BacktestRequest(BaseModel):
@@ -19,6 +19,25 @@ class BacktestRequest(BaseModel):
         default=(1, 0, 1, 7)
     )
     sarima_maxiter: int = Field(default=100, ge=10, le=500)
+
+    @model_validator(mode="after")
+    def validate_sarima_parameters(self) -> "BacktestRequest":
+        p, d, q = self.sarima_order
+        seasonal_p, seasonal_d, seasonal_q, period = self.sarima_seasonal_order
+        if p > 5 or q > 5 or d > 2 or min(p, d, q) < 0:
+            raise ValueError("SARIMA order requires p/q in 0..5 and d in 0..2")
+        if (
+            seasonal_p > 3
+            or seasonal_q > 3
+            or seasonal_d > 2
+            or min(seasonal_p, seasonal_d, seasonal_q) < 0
+            or not 2 <= period <= 30
+        ):
+            raise ValueError(
+                "SARIMA seasonal order requires P/Q in 0..3, D in 0..2, "
+                "and period in 2..30"
+            )
+        return self
 
 
 class FoldMetricsResponse(BaseModel):
@@ -62,6 +81,10 @@ class BacktestRunResponse(BaseModel):
     dataset_fingerprint: str
     snapshot_id: int
     horizon_days: int
+    holdout_days: int
+    min_train_days: int
+    step_days: int
+    experiment_key: str | None
     holdout_from: date
     holdout_to: date
     holdout_evaluated: bool = False

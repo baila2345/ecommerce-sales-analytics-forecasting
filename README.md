@@ -231,13 +231,17 @@ Phân phối giao hàng hiện tại có P95 là 29 ngày, vì vậy snapshot d�
 ## Background backtest và M0–M1
 
 Migration `0004` tạo `model_runs` và `backtest_folds`; migration `0005` bổ sung
-vòng đời `queued → running → succeeded/failed`, RQ job và lỗi fold. Endpoint
+vòng đời `queued → running → succeeded/failed`, RQ job và lỗi fold. Migration
+`0006` thêm `experiment_key` để request cùng dataset/model/config có tính
+idempotent; run thất bại hoặc quá timeout được phép chạy lại. Endpoint
 `POST /api/v1/models/backtests` trả `202` rồi đưa M0/M1 vào Redis queue; service
 `worker` chạy Seasonal Naive hoặc SARIMA ở nền. Endpoint
 `GET /api/v1/models/runs/{id}` đọc lại đầy đủ run/fold và
-`GET /api/v1/models/runs/latest?model_code=M0|M1` lấy run mới nhất. Backtest dùng expanding
-window, không đọc actual tương lai khi dự báo nhiều bước và không dùng holdout
-cuối 90 ngày trong tuning.
+`GET /api/v1/models/runs/latest?model_code=M0|M1` nhận thêm fingerprint, horizon,
+holdout, min-train và step để chỉ lấy run cùng experiment signature. Backtest dùng
+expanding window, không đọc actual tương lai khi dự báo nhiều bước và không dùng
+holdout cuối 90 ngày trong tuning. Worker dùng JSON serializer; Redis chỉ bind
+localhost trong môi trường phát triển.
 
 Frontend `/model-lab` cho phép admin/analyst cấu hình và chạy M0/M1, polling
 trạng thái worker, hiển thị lỗi fold, fingerprint, MAE/RMSE/WAPE, biểu đồ
@@ -260,7 +264,9 @@ M1. Holdout vẫn chưa được mở.
 3. So sánh M0–M4, chốt model trước khi mở holdout 90 ngày.
 4. Thêm train final, quantile, Forecast API và Forecast Center.
 
-Chi tiết và trạng thái từng gate nằm trong `docs/TECH_PLAN_CODE.md`.
+Chi tiết và trạng thái từng gate nằm trong `docs/TECH_PLAN_CODE.md`. Quy tắc bắt
+buộc về cấu trúc module, an toàn dữ liệu/job, ML leakage và verification nằm trong
+`AGENTS.md`.
 
 ## Authentication
 
