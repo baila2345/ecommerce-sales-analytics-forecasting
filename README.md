@@ -228,18 +228,20 @@ Phân phối giao hàng hiện tại có P95 là 29 ngày, vì vậy snapshot d�
 - 774 ngày từ 04/09/2016 đến 17/10/2018, trong đó 725 ngày mature đến 29/08/2018;
 - 96.470 order, 110.189 item và revenue `13.220.248,93`.
 
-## Baseline M0
+## Background backtest và M0–M1
 
-Migration `0004` tạo `model_runs` và `backtest_folds`. Endpoint
-`POST /api/v1/models/backtests` chạy Seasonal Naive chu kỳ 7 ngày; endpoint
+Migration `0004` tạo `model_runs` và `backtest_folds`; migration `0005` bổ sung
+vòng đời `queued → running → succeeded/failed`, RQ job và lỗi fold. Endpoint
+`POST /api/v1/models/backtests` trả `202` rồi đưa M0/M1 vào Redis queue; service
+`worker` chạy Seasonal Naive hoặc SARIMA ở nền. Endpoint
 `GET /api/v1/models/runs/{id}` đọc lại đầy đủ run/fold và
-`GET /api/v1/models/runs/latest` lấy run M0 mới nhất. Backtest dùng expanding
+`GET /api/v1/models/runs/latest?model_code=M0|M1` lấy run mới nhất. Backtest dùng expanding
 window, không đọc actual tương lai khi dự báo nhiều bước và không dùng holdout
 cuối 90 ngày trong tuning.
 
-Frontend `/model-lab` cho phép admin/analyst cấu hình và chạy M0, đồng thời hiển
-thị fingerprint, quality policy, MAE/RMSE/WAPE, biểu đồ actual–prediction và
-metric từng fold. Manager có quyền xem kết quả nhưng không được khởi chạy run.
+Frontend `/model-lab` cho phép admin/analyst cấu hình và chạy M0/M1, polling
+trạng thái worker, hiển thị lỗi fold, fingerprint, MAE/RMSE/WAPE, biểu đồ
+actual–prediction, metric từng fold và bảng so sánh. Manager chỉ được xem.
 
 Run M0 đầu tiên dùng horizon/step 30 ngày, có 9 fold và giữ kín holdout
 01/06–29/08/2018. Kết quả validation: MAE trung bình `9.497,66`, RMSE
@@ -247,10 +249,14 @@ Run M0 đầu tiên dùng horizon/step 30 ngày, có 9 fold và giữ kín holdo
 sánh/chọn model. Import thành công cũng chủ động xóa cache Analytics; lỗi Redis
 không làm hỏng transaction import.
 
+M1 dùng SARIMA `(1,1,1) × (1,0,1,7)` trên đúng 9 fold của M0. Run #7 cho MAE
+`10.162,31`, RMSE `12.723,13`, WAPE `37,95%`; vì WAPE cao hơn M0 nên chưa chọn
+M1. Holdout vẫn chưa được mở.
+
 ## Kế hoạch phát triển tiếp theo
 
-1. Thêm worker cho model job dài và mở rộng Model Lab với SARIMA M1 trên cùng fold.
-2. Triển khai LightGBM direct, Orders × AOV và ensemble M2–M4.
+1. Triển khai LightGBM direct M2 trên cùng snapshot/fold.
+2. Triển khai Orders × AOV và ensemble M3–M4.
 3. So sánh M0–M4, chốt model trước khi mở holdout 90 ngày.
 4. Thêm train final, quantile, Forecast API và Forecast Center.
 

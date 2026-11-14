@@ -360,6 +360,20 @@ a { color: inherit; }
 .model-empty h2 { margin: 0; font-size: 1rem; }
 .model-empty p { margin: 6px 0 0; color: #7d8999; font-size: .72rem; }
 .model-stale-warning { border: 1px solid #efcac6; border-radius: 10px; padding: 12px 15px; color: #8f342e; background: #fff7f6; font-size: .72rem; }
+.model-config-grid--models { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.model-config-note { margin: 12px 0 0; border-radius: 8px; padding: 9px 11px; color: #5f6f84; background: #f4f7fb; font-size: .66rem; }
+.model-comparison-panel { padding-bottom: 14px; }
+.model-comparison-table td, .model-comparison-table th { text-align: left; }
+.run-state { display: inline-grid; min-width: 58px; place-items: center; border-radius: 999px; padding: 5px 8px; color: #657287; background: #edf1f5; font-size: .57rem; font-weight: 850; text-transform: uppercase; }
+.run-state--queued { color: #80570f; background: #fff2d5; }
+.run-state--running { color: #235fb8; background: #eaf2ff; }
+.run-state--succeeded { color: #24734e; background: #e9f7ef; }
+.run-state--failed { color: #943c34; background: #fce9e7; }
+.model-run-progress, .model-run-failure { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 15px; min-height: 112px; border: 1px solid #d8e2f0; border-radius: 14px; padding: 22px; background: #f8fbff; }
+.model-run-progress h2, .model-run-failure h2 { margin: 0; font-size: .95rem; }
+.model-run-progress p, .model-run-failure p { margin: 5px 0 0; color: #7b8797; font-size: .7rem; }
+.model-run-failure { border-color: #efcac6; color: #8f342e; background: #fff7f6; }
+.model-run-failure > span:first-child { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; color: #fff; background: #b94b43; font-weight: 850; }
 
 @media (max-width: 1100px) {
   .status-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -368,6 +382,7 @@ a { color: inherit; }
   .analytics-filter-bar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .analytics-chart-grid { grid-template-columns: 1fr; }
   .model-lab-top-grid, .model-detail-grid { grid-template-columns: 1fr; }
+  .model-config-grid--models { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 960px) {
   .auth-page { grid-template-columns: 1fr; }
@@ -380,6 +395,7 @@ a { color: inherit; }
   .admin-profile-card { width: min(100%, 420px); }
   .analytics-detail-grid { grid-template-columns: 1fr; }
   .model-config-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .model-config-grid--models { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .upload-form { grid-template-columns: 1fr; }
   .button--preview { min-height: 48px; }
 }
@@ -421,6 +437,7 @@ a { color: inherit; }
   .analytics-page { padding: 26px 18px; }
   .model-lab-page { padding: 26px 18px; }
   .model-config-grid, .model-kpi-grid { grid-template-columns: 1fr; }
+  .model-config-grid--models { grid-template-columns: 1fr; }
   .model-config-footer { align-items: stretch; flex-direction: column; }
   .model-run-button { width: 100%; }
   .holdout-banner { grid-template-columns: auto 1fr; }

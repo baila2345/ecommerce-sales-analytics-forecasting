@@ -4,6 +4,13 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.db.base import utc_now
 from app.db.models import AuditEvent, ModelRun, ModelRunStatus, User
+from app.modules.backtests.engine import (
+    run_rolling_backtest,
+    split_development_holdout,
+)
+from app.modules.backtests.models.sarima import SarimaModel
+from app.modules.backtests.models.seasonal_naive import SeasonalNaiveModel
+from app.modules.backtests.queue import BacktestDispatcher
 from app.modules.backtests.repository import BacktestRepository
 from app.modules.backtests.schemas import (
     AggregateMetricsResponse,
@@ -13,15 +20,22 @@ from app.modules.backtests.schemas import (
     FoldMetricsResponse,
     PredictionPointResponse,
 )
-from app.modules.backtests.seasonal_naive import run_seasonal_naive_backtest
+from app.modules.backtests.types import BacktestResult, FoldExecutionError
 
 
 class BacktestService:
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        dispatcher: BacktestDispatcher | None = None,
+    ) -> None:
         self.session = session
         self.repository = BacktestRepository(session)
+        self.dispatcher = dispatcher
 
-    def run(self, request: BacktestRequest, user: User) -> BacktestRunResponse:
+    def enqueue(
+        self, request: BacktestRequest, user: User
+    ) -> BacktestRunResponse:
         snapshot = self.repository.ready_snapshot(request.dataset_fingerprint)
         if snapshot is None:
             raise AppError(
@@ -31,13 +45,11 @@ class BacktestService:
             )
         series = self.repository.mature_revenue_series(snapshot.id)
         try:
-            result = run_seasonal_naive_backtest(
+            _, holdout = split_development_holdout(
                 series,
                 horizon_days=request.horizon_days,
                 holdout_days=request.holdout_days,
                 min_train_days=request.min_train_days,
-                step_days=request.step_days,
-                season_length=request.season_length,
             )
         except ValueError as exc:
             raise AppError(
@@ -49,17 +61,111 @@ class BacktestService:
         run = ModelRun(
             snapshot_id=snapshot.id,
             dataset_fingerprint=snapshot.fingerprint,
-            model_code="M0",
+            model_code=request.model_code,
             target="revenue",
             horizon_days=request.horizon_days,
-            status=ModelRunStatus.RUNNING.value,
-            config_json=request.model_dump(),
-            holdout_from=result.holdout_from,
-            holdout_to=result.holdout_to,
+            status=ModelRunStatus.QUEUED.value,
+            config_json=request.model_dump(mode="json"),
+            holdout_from=holdout[0].date,
+            holdout_to=holdout[-1].date,
             created_by_id=user.id,
         )
         self.session.add(run)
-        self.session.flush()
+        self.session.commit()
+
+        if self.dispatcher is None:
+            raise RuntimeError("A backtest dispatcher is required to enqueue a run")
+        try:
+            run.job_id = self.dispatcher.enqueue(run.id)
+            self.session.commit()
+        except Exception as exc:
+            self.session.rollback()
+            failed_run = self.repository.get_run(run.id)
+            assert failed_run is not None
+            failed_run.status = ModelRunStatus.FAILED.value
+            failed_run.error_json = {
+                "code": "QUEUE_UNAVAILABLE",
+                "message": str(exc),
+                "stage": "enqueue",
+                "fold_no": None,
+            }
+            failed_run.completed_at = utc_now()
+            self.session.commit()
+            raise AppError(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="BACKTEST_QUEUE_UNAVAILABLE",
+                message="The model worker queue is unavailable",
+            ) from exc
+        persisted_run = self.repository.get_run(run.id)
+        assert persisted_run is not None
+        return self._response(persisted_run)
+
+    def execute_run(self, run_id: int) -> BacktestRunResponse:
+        run = self.repository.get_run(run_id)
+        if run is None:
+            raise ValueError(f"Model run {run_id} was not found")
+        if run.status == ModelRunStatus.SUCCEEDED.value:
+            return self._response(run)
+        if run.status != ModelRunStatus.QUEUED.value:
+            raise ValueError(
+                f"Model run {run_id} cannot start from status {run.status}"
+            )
+
+        run.status = ModelRunStatus.RUNNING.value
+        run.started_at = utc_now()
+        run.error_json = None
+        self.session.commit()
+
+        try:
+            request = BacktestRequest.model_validate(run.config_json)
+            series = self.repository.mature_revenue_series(run.snapshot_id)
+            result = self._execute_model(request, series)
+            self._persist_result(run, result)
+            self.session.commit()
+        except Exception as exc:
+            self.session.rollback()
+            failed_run = self.repository.get_run(run_id)
+            assert failed_run is not None
+            failed_run.status = ModelRunStatus.FAILED.value
+            failed_run.error_json = {
+                "code": "BACKTEST_FOLD_FAILED"
+                if isinstance(exc, FoldExecutionError)
+                else "BACKTEST_FAILED",
+                "message": str(exc),
+                "stage": "fold" if isinstance(exc, FoldExecutionError) else "run",
+                "fold_no": getattr(exc, "fold_no", None),
+                "error_type": type(exc).__name__,
+            }
+            failed_run.completed_at = utc_now()
+            self.session.commit()
+            raise
+
+        persisted_run = self.repository.get_run(run_id)
+        assert persisted_run is not None
+        return self._response(persisted_run)
+
+    @staticmethod
+    def _execute_model(request: BacktestRequest, series) -> BacktestResult:
+        if request.model_code == "M0":
+            model = SeasonalNaiveModel(
+                season_length=request.season_length,
+            )
+        else:
+            model = SarimaModel(
+                order=request.sarima_order,
+                seasonal_order=request.sarima_seasonal_order,
+                maxiter=request.sarima_maxiter,
+            )
+        return run_rolling_backtest(
+            series,
+            model=model,
+            horizon_days=request.horizon_days,
+            holdout_days=request.holdout_days,
+            min_train_days=request.min_train_days,
+            step_days=request.step_days,
+        )
+
+    def _persist_result(self, run: ModelRun, result: BacktestResult) -> None:
         for fold in result.folds:
             self.repository.add_fold(
                 run_id=run.id,
@@ -81,22 +187,18 @@ class BacktestService:
         run.completed_at = utc_now()
         self.session.add(
             AuditEvent(
-                actor_id=user.id,
+                actor_id=run.created_by_id,
                 action="model.backtest_completed",
                 entity_type="model_run",
                 entity_id=str(run.id),
                 payload_json={
-                    "model_code": "M0",
-                    "dataset_fingerprint": snapshot.fingerprint,
+                    "model_code": run.model_code,
+                    "dataset_fingerprint": run.dataset_fingerprint,
                     "fold_count": len(result.folds),
-                    "horizon_days": request.horizon_days,
+                    "horizon_days": run.horizon_days,
                 },
             )
         )
-        self.session.commit()
-        persisted_run = self.repository.get_run(run.id)
-        assert persisted_run is not None
-        return self._response(persisted_run)
 
     def get_run(self, run_id: int) -> BacktestRunResponse:
         run = self.repository.get_run(run_id)
@@ -120,7 +222,7 @@ class BacktestService:
 
     @staticmethod
     def _response(run: ModelRun) -> BacktestRunResponse:
-        metrics = run.metrics_json or {}
+        metrics = run.metrics_json
         return BacktestRunResponse(
             id=run.id,
             model_code=run.model_code,
@@ -132,7 +234,7 @@ class BacktestService:
             holdout_to=run.holdout_to,
             holdout_evaluated=False,
             fold_count=len(run.folds),
-            metrics=AggregateMetricsResponse(**metrics),
+            metrics=(AggregateMetricsResponse(**metrics) if metrics else None),
             folds=[
                 BacktestFoldResponse(
                     fold_no=fold.fold_no,
@@ -155,6 +257,9 @@ class BacktestService:
                 )
                 for fold in run.folds
             ],
+            job_id=run.job_id,
+            error=run.error_json,
             created_at=run.created_at,
+            started_at=run.started_at,
             completed_at=run.completed_at,
         )

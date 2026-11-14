@@ -20,14 +20,20 @@ export type DatasetSnapshot = {
   completed_at: string | null;
 };
 
+export type ModelCode = "M0" | "M1";
+export type RunStatus = "queued" | "running" | "succeeded" | "failed";
+
 export type BacktestConfig = {
-  model_code: "M0";
+  model_code: ModelCode;
   dataset_fingerprint: string;
   horizon_days: 7 | 30;
   holdout_days: number;
   min_train_days: number;
   step_days: number;
   season_length: number;
+  sarima_order: [number, number, number];
+  sarima_seasonal_order: [number, number, number, number];
+  sarima_maxiter: number;
 };
 
 export type PredictionPoint = {
@@ -57,8 +63,8 @@ export type BacktestFold = {
 
 export type BacktestRun = {
   id: number;
-  model_code: string;
-  status: string;
+  model_code: ModelCode;
+  status: RunStatus;
   dataset_fingerprint: string;
   snapshot_id: number;
   horizon_days: number;
@@ -73,8 +79,17 @@ export type BacktestRun = {
     rmse_std: number;
     wape_mean: number | null;
     wape_std: number | null;
-  };
+  } | null;
   folds: BacktestFold[];
+  job_id: string | null;
+  error: {
+    code: string;
+    message: string;
+    stage?: string;
+    fold_no?: number | null;
+    error_type?: string;
+  } | null;
   created_at: string;
+  started_at: string | null;
   completed_at: string | null;
 };

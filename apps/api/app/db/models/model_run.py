@@ -23,6 +23,7 @@ from app.db.base import Base, utc_now
 
 
 class ModelRunStatus(StrEnum):
+    QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -36,7 +37,7 @@ class ModelRun(Base):
             name="model_code",
         ),
         CheckConstraint(
-            "status IN ('running', 'succeeded', 'failed')",
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
             name="status",
         ),
         CheckConstraint("horizon_days IN (7, 30)", name="horizon_days"),
@@ -63,6 +64,8 @@ class ModelRun(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     config_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     metrics_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     holdout_from: Mapped[date] = mapped_column(Date, nullable=False)
     holdout_to: Mapped[date] = mapped_column(Date, nullable=False)
     created_by_id: Mapped[int | None] = mapped_column(
@@ -77,6 +80,7 @@ class ModelRun(Base):
         default=utc_now,
         server_default=func.current_timestamp(),
     )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     folds: Mapped[list["BacktestFold"]] = relationship(

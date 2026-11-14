@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -15,12 +16,15 @@ from app.db.models import (
     User,
     UserRole,
 )
-from app.modules.backtests.seasonal_naive import (
-    SeriesPoint,
-    calculate_metrics,
+from app.modules.backtests.metrics import calculate_metrics
+from app.modules.backtests.models.sarima import run_sarima_backtest
+from app.modules.backtests.models.seasonal_naive import (
     run_seasonal_naive_backtest,
     seasonal_naive_forecast,
 )
+from app.modules.backtests.queue import get_backtest_dispatcher
+from app.modules.backtests.service import BacktestService
+from app.modules.backtests.types import FoldExecutionError, SeriesPoint
 from app.modules.datasets.fingerprint import REQUIRED_DATASET_TYPES
 
 
@@ -97,6 +101,45 @@ def test_wape_is_null_when_actual_sum_is_zero() -> None:
     assert metrics.wape is None
 
 
+def test_m1_uses_the_same_folds_and_keeps_holdout_locked(monkeypatch) -> None:
+    start = date(2020, 1, 1)
+    series = [
+        SeriesPoint(start + timedelta(days=index), float(100 + index % 7))
+        for index in range(600)
+    ]
+    monkeypatch.setattr(
+        "app.modules.backtests.models.sarima.sarima_forecast",
+        lambda train, steps, **_kwargs: [float(train[-7])] * steps,
+    )
+    common = {
+        "horizon_days": 30,
+        "holdout_days": 90,
+        "min_train_days": 365,
+        "step_days": 30,
+    }
+
+    m0 = run_seasonal_naive_backtest(series, **common)
+    m1 = run_sarima_backtest(series, **common)
+
+    assert [fold.test_from for fold in m1.folds] == [
+        fold.test_from for fold in m0.folds
+    ]
+    assert [fold.test_to for fold in m1.folds] == [
+        fold.test_to for fold in m0.folds
+    ]
+    assert m1.holdout_from == m0.holdout_from
+    assert all(fold.test_to < m1.holdout_from for fold in m1.folds)
+
+
+class FakeDispatcher:
+    def __init__(self) -> None:
+        self.run_ids: list[int] = []
+
+    def enqueue(self, run_id: int) -> str:
+        self.run_ids.append(run_id)
+        return f"job-{run_id}"
+
+
 def seed_backtest_snapshot(db_session: Session) -> str:
     user = User(
         email="backtest@example.com",
@@ -144,6 +187,8 @@ def test_m0_backtest_endpoint_persists_run_and_folds(
     client: TestClient,
     db_session: Session,
 ) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
     token = seed_backtest_snapshot(db_session)
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -161,9 +206,17 @@ def test_m0_backtest_endpoint_persists_run_and_folds(
         },
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["model_code"] == "M0"
+    assert response.status_code == 202
+    queued = response.json()
+    assert queued["model_code"] == "M0"
+    assert queued["status"] == "queued"
+    assert queued["metrics"] is None
+    assert queued["fold_count"] == 0
+    assert queued["job_id"] == f"job-{queued['id']}"
+    assert dispatcher.run_ids == [queued["id"]]
+
+    completed = BacktestService(db_session).execute_run(queued["id"])
+    body = completed.model_dump(mode="json")
     assert body["status"] == "succeeded"
     assert body["holdout_evaluated"] is False
     assert body["fold_count"] == 4
@@ -181,3 +234,44 @@ def test_m0_backtest_endpoint_persists_run_and_folds(
     assert latest.json() == body
     assert db_session.scalar(select(func.count()).select_from(ModelRun)) == 1
     assert db_session.scalar(select(func.count()).select_from(BacktestFold)) == 4
+
+
+def test_m1_fold_failure_is_persisted(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
+    token = seed_backtest_snapshot(db_session)
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.post(
+        "/api/v1/models/backtests",
+        headers=headers,
+        json={
+            "model_code": "M1",
+            "dataset_fingerprint": "a" * 64,
+            "horizon_days": 30,
+            "holdout_days": 90,
+            "min_train_days": 365,
+            "step_days": 30,
+        },
+    )
+    run_id = response.json()["id"]
+    monkeypatch.setattr(
+        "app.modules.backtests.service.run_rolling_backtest",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            FoldExecutionError("M1", 2, "optimizer failed")
+        ),
+    )
+
+    with pytest.raises(FoldExecutionError):
+        BacktestService(db_session).execute_run(run_id)
+
+    failed = client.get(f"/api/v1/models/runs/{run_id}", headers=headers)
+    assert failed.status_code == 200
+    body = failed.json()
+    assert body["status"] == "failed"
+    assert body["error"]["code"] == "BACKTEST_FOLD_FAILED"
+    assert body["error"]["fold_no"] == 2
+    assert body["completed_at"] is not None

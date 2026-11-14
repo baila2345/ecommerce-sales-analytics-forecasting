@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import BacktestFold, DailySale, DatasetSnapshot, ModelRun
-from app.modules.backtests.seasonal_naive import SeriesPoint
+from app.modules.backtests.types import SeriesPoint
 
 
 class BacktestRepository:

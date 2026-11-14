@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class BacktestRequest(BaseModel):
-    model_code: Literal["M0"] = "M0"
+    model_code: Literal["M0", "M1"] = "M0"
     dataset_fingerprint: str | None = Field(
         default=None, min_length=64, max_length=64
     )
@@ -14,6 +14,11 @@ class BacktestRequest(BaseModel):
     min_train_days: int = Field(default=365, ge=90, le=730)
     step_days: int = Field(default=30, ge=7, le=90)
     season_length: int = Field(default=7, ge=2, le=30)
+    sarima_order: tuple[int, int, int] = Field(default=(1, 1, 1))
+    sarima_seasonal_order: tuple[int, int, int, int] = Field(
+        default=(1, 0, 1, 7)
+    )
+    sarima_maxiter: int = Field(default=100, ge=10, le=500)
 
 
 class FoldMetricsResponse(BaseModel):
@@ -61,7 +66,10 @@ class BacktestRunResponse(BaseModel):
     holdout_to: date
     holdout_evaluated: bool = False
     fold_count: int
-    metrics: AggregateMetricsResponse
+    metrics: AggregateMetricsResponse | None
     folds: list[BacktestFoldResponse]
+    job_id: str | None
+    error: dict | None
     created_at: datetime
+    started_at: datetime | None
     completed_at: datetime | None

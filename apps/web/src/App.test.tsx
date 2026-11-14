@@ -238,10 +238,10 @@ describe("M0 Model Lab", () => {
       created_at: "2026-11-12T00:00:00",
       completed_at: "2026-11-12T00:01:00",
     };
-    const makeRun = (id: number) => ({
+    const makeRun = (id: number, status = "succeeded") => ({
       id,
       model_code: "M0",
-      status: "succeeded",
+      status,
       dataset_fingerprint: snapshot.fingerprint,
       snapshot_id: snapshot.id,
       horizon_days: 30,
@@ -249,15 +249,15 @@ describe("M0 Model Lab", () => {
       holdout_to: "2018-08-29",
       holdout_evaluated: false,
       fold_count: 1,
-      metrics: {
+      metrics: status === "succeeded" ? {
         mae_mean: 9497.66,
         mae_std: 0,
         rmse_mean: 12441.22,
         rmse_std: 0,
         wape_mean: 34.75,
         wape_std: 0,
-      },
-      folds: [{
+      } : null,
+      folds: status === "succeeded" ? [{
         fold_no: 1,
         origin_date: "2018-05-01",
         train_from: "2016-09-04",
@@ -275,17 +275,24 @@ describe("M0 Model Lab", () => {
           { date: "2018-05-01", actual: 3000, predicted: 2800 },
           { date: "2018-05-02", actual: 3500, predicted: 3200 },
         ],
-      }],
+      }] : [],
+      job_id: `job-${id}`,
+      error: null,
       created_at: "2026-11-12T00:00:00",
-      completed_at: "2026-11-12T00:00:02",
+      started_at: status === "queued" ? null : "2026-11-12T00:00:01",
+      completed_at: status === "succeeded" ? "2026-11-12T00:00:02" : null,
     });
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/auth/me")) return Promise.resolve(jsonResponse(userProfile));
       if (url.includes("/datasets/snapshots/latest")) return Promise.resolve(jsonResponse(snapshot));
-      if (url.includes("/models/runs/latest")) return Promise.resolve(jsonResponse(makeRun(1)));
+      if (url.includes("/models/runs/latest?model_code=M0")) return Promise.resolve(jsonResponse(makeRun(1)));
+      if (url.includes("/models/runs/latest?model_code=M1")) return Promise.resolve(jsonResponse({
+        error: { code: "MODEL_RUN_NOT_FOUND", message: "Model run was not found" },
+      }, 404));
+      if (url.includes("/models/runs/2")) return Promise.resolve(jsonResponse(makeRun(2)));
       if (url.includes("/models/backtests") && init?.method === "POST") {
-        return Promise.resolve(jsonResponse(makeRun(2)));
+        return Promise.resolve(jsonResponse(makeRun(2, "queued"), 202));
       }
       return Promise.resolve(jsonResponse({}, 404));
     });
@@ -301,7 +308,10 @@ describe("M0 Model Lab", () => {
 
     await user.click(screen.getByRole("button", { name: "Chạy backtest M0" }));
 
-    expect(await screen.findByText("Kết quả M0 · Run #2")).toBeInTheDocument();
+    expect(await screen.findByText("M0 đang chờ worker")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Kết quả M0 · Run #2")).toBeInTheDocument();
+    }, { timeout: 2500 });
     const postCall = fetchMock.mock.calls.find(
       ([url, options]) => String(url).includes("/models/backtests") && options?.method === "POST",
     );
@@ -312,6 +322,8 @@ describe("M0 Model Lab", () => {
       horizon_days: 30,
       holdout_days: 90,
       season_length: 7,
+      sarima_order: [1, 1, 1],
+      sarima_seasonal_order: [1, 0, 1, 7],
     });
   });
 });
