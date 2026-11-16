@@ -10,9 +10,12 @@ from app.core.errors import AppError
 from app.db.base import utc_now
 from app.db.models import AuditEvent, ModelRun, ModelRunStatus, User
 from app.modules.backtests.engine import (
-    run_rolling_backtest,
+    run_temporal_rolling_backtest,
     split_development_holdout,
 )
+from app.modules.backtests.features.direct_revenue import DIRECT_FEATURE_SCHEMA_HASH
+from app.modules.backtests.models.base import SeriesModelAdapter
+from app.modules.backtests.models.lightgbm_direct import LightGBMDirectModel
 from app.modules.backtests.models.sarima import SarimaModel
 from app.modules.backtests.models.seasonal_naive import SeasonalNaiveModel
 from app.modules.backtests.queue import BacktestDispatcher
@@ -25,11 +28,19 @@ from app.modules.backtests.schemas import (
     FoldMetricsResponse,
     PredictionPointResponse,
 )
-from app.modules.backtests.types import BacktestResult, FoldExecutionError
+from app.modules.backtests.types import (
+    BacktestDataset,
+    BacktestResult,
+    FoldExecutionError,
+)
 
 
 class BacktestService:
-    MODEL_VERSIONS = {"M0": "seasonal-naive-v1", "M1": "sarima-v1"}
+    MODEL_VERSIONS = {
+        "M0": "seasonal-naive-v2-asof",
+        "M1": "sarima-v2-asof",
+        "M2": "lightgbm-direct-v3-scaled-stable",
+    }
     RUN_TIMEOUT = timedelta(minutes=65)
 
     def __init__(
@@ -61,6 +72,7 @@ class BacktestService:
                 horizon_days=request.horizon_days,
                 holdout_days=request.holdout_days,
                 min_train_days=request.min_train_days,
+                maturity_days=snapshot.maturity_days,
             )
         except ValueError as exc:
             raise AppError(
@@ -74,6 +86,10 @@ class BacktestService:
         if existing is not None:
             return self._response(existing)
 
+        config = request.model_dump(mode="json")
+        config["model_version"] = self.MODEL_VERSIONS[request.model_code]
+        if request.model_code == "M2":
+            config["feature_schema_hash"] = DIRECT_FEATURE_SCHEMA_HASH
         run = ModelRun(
             snapshot_id=snapshot.id,
             dataset_fingerprint=snapshot.fingerprint,
@@ -81,7 +97,7 @@ class BacktestService:
             target="revenue",
             horizon_days=request.horizon_days,
             status=ModelRunStatus.QUEUED.value,
-            config_json=request.model_dump(mode="json"),
+            config_json=config,
             experiment_key=experiment_key,
             holdout_from=holdout[0].date,
             holdout_to=holdout[-1].date,
@@ -141,8 +157,8 @@ class BacktestService:
 
         try:
             request = BacktestRequest.model_validate(run.config_json)
-            series = self.repository.mature_revenue_series(run.snapshot_id)
-            result = self._execute_model(request, series)
+            dataset = self.repository.backtest_dataset(run.snapshot_id)
+            result = self._execute_model(request, dataset)
             self._persist_result(run, result)
             self.session.commit()
         except Exception as exc:
@@ -169,19 +185,32 @@ class BacktestService:
         return self._response(persisted_run)
 
     @staticmethod
-    def _execute_model(request: BacktestRequest, series) -> BacktestResult:
+    def _execute_model(
+        request: BacktestRequest, dataset: BacktestDataset
+    ) -> BacktestResult:
         if request.model_code == "M0":
-            model = SeasonalNaiveModel(
-                season_length=request.season_length,
+            model = SeriesModelAdapter(
+                SeasonalNaiveModel(season_length=request.season_length)
+            )
+        elif request.model_code == "M1":
+            model = SeriesModelAdapter(
+                SarimaModel(
+                    order=request.sarima_order,
+                    seasonal_order=request.sarima_seasonal_order,
+                    maxiter=request.sarima_maxiter,
+                )
             )
         else:
-            model = SarimaModel(
-                order=request.sarima_order,
-                seasonal_order=request.sarima_seasonal_order,
-                maxiter=request.sarima_maxiter,
+            model = LightGBMDirectModel(
+                n_estimators=request.m2_n_estimators,
+                learning_rate=request.m2_learning_rate,
+                num_leaves=request.m2_num_leaves,
+                max_depth=request.m2_max_depth,
+                min_child_samples=request.m2_min_child_samples,
+                seed=request.m2_seed,
             )
-        return run_rolling_backtest(
-            series,
+        return run_temporal_rolling_backtest(
+            dataset,
             model=model,
             horizon_days=request.horizon_days,
             holdout_days=request.holdout_days,
@@ -246,10 +275,17 @@ class BacktestService:
         step_days: int | None = None,
         season_length: int | None = None,
         sarima_maxiter: int | None = None,
+        m2_n_estimators: int | None = None,
+        m2_learning_rate: float | None = None,
+        m2_num_leaves: int | None = None,
+        m2_max_depth: int | None = None,
+        m2_min_child_samples: int | None = None,
+        m2_seed: int | None = None,
     ) -> BacktestRunResponse:
         self._expire_stale_runs()
         run = self.repository.latest_matching_run(
             model_code=model_code,
+            model_version=self.MODEL_VERSIONS[model_code],
             dataset_fingerprint=dataset_fingerprint,
             horizon_days=horizon_days,
             holdout_days=holdout_days,
@@ -257,6 +293,12 @@ class BacktestService:
             step_days=step_days,
             season_length=season_length,
             sarima_maxiter=sarima_maxiter,
+            m2_n_estimators=m2_n_estimators,
+            m2_learning_rate=m2_learning_rate,
+            m2_num_leaves=m2_num_leaves,
+            m2_max_depth=m2_max_depth,
+            m2_min_child_samples=m2_min_child_samples,
+            m2_seed=m2_seed,
         )
         if run is None:
             raise AppError(
@@ -298,12 +340,24 @@ class BacktestService:
         }
         if request.model_code == "M0":
             common["season_length"] = request.season_length
-        else:
+        elif request.model_code == "M1":
             common.update(
                 {
                     "sarima_order": request.sarima_order,
                     "sarima_seasonal_order": request.sarima_seasonal_order,
                     "sarima_maxiter": request.sarima_maxiter,
+                }
+            )
+        if request.model_code == "M2":
+            common.update(
+                {
+                    "m2_n_estimators": request.m2_n_estimators,
+                    "m2_learning_rate": request.m2_learning_rate,
+                    "m2_num_leaves": request.m2_num_leaves,
+                    "m2_max_depth": request.m2_max_depth,
+                    "m2_min_child_samples": request.m2_min_child_samples,
+                    "m2_seed": request.m2_seed,
+                    "feature_schema_hash": DIRECT_FEATURE_SCHEMA_HASH,
                 }
             )
         canonical = json.dumps(common, sort_keys=True, separators=(",", ":"))
@@ -323,6 +377,8 @@ class BacktestService:
             min_train_days=int(run.config_json["min_train_days"]),
             step_days=int(run.config_json["step_days"]),
             experiment_key=run.experiment_key,
+            model_version=run.config_json.get("model_version"),
+            feature_schema_hash=run.config_json.get("feature_schema_hash"),
             holdout_from=run.holdout_from,
             holdout_to=run.holdout_to,
             holdout_evaluated=False,

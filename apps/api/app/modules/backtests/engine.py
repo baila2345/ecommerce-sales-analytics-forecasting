@@ -1,8 +1,18 @@
 from datetime import timedelta
 
 from app.modules.backtests.metrics import aggregate_metrics, calculate_metrics
-from app.modules.backtests.models.base import ForecastModel
+from app.modules.backtests.datasets import (
+    RevenueAsOfIndex,
+    dataset_from_series,
+    known_series_at,
+)
+from app.modules.backtests.models.base import (
+    ForecastModel,
+    SeriesModelAdapter,
+    TemporalForecastModel,
+)
 from app.modules.backtests.types import (
+    BacktestDataset,
     BacktestResult,
     FoldExecutionError,
     FoldResult,
@@ -19,21 +29,45 @@ def run_rolling_backtest(
     min_train_days: int,
     step_days: int,
 ) -> BacktestResult:
-    development, holdout = split_development_holdout(
-        series,
+    return run_temporal_rolling_backtest(
+        dataset_from_series(series),
+        model=SeriesModelAdapter(model),
         horizon_days=horizon_days,
         holdout_days=holdout_days,
         min_train_days=min_train_days,
+        step_days=step_days,
     )
+
+
+def run_temporal_rolling_backtest(
+    dataset: BacktestDataset,
+    *,
+    model: TemporalForecastModel,
+    horizon_days: int,
+    holdout_days: int,
+    min_train_days: int,
+    step_days: int,
+) -> BacktestResult:
+    development, holdout = split_development_holdout(
+        dataset.actuals,
+        horizon_days=horizon_days,
+        holdout_days=holdout_days,
+        min_train_days=min_train_days,
+        maturity_days=dataset.maturity_days,
+    )
+    index = RevenueAsOfIndex(dataset.revenue_events)
     folds: list[FoldResult] = []
-    test_start_index = min_train_days
+    test_start_index = min_train_days + dataset.maturity_days
     while test_start_index + horizon_days <= len(development):
         fold_no = len(folds) + 1
-        train = development[:test_start_index]
         test = development[test_start_index : test_start_index + horizon_days]
+        origin_date = test[0].date - timedelta(days=1)
+        train = known_series_at(dataset, index, origin_date)
         try:
             predictions = model.forecast(
-                train,
+                dataset,
+                index,
+                origin_date,
                 [point.date for point in test],
             )
         except Exception as exc:
@@ -50,7 +84,7 @@ def run_rolling_backtest(
         folds.append(
             FoldResult(
                 fold_no=fold_no,
-                origin_date=train[-1].date,
+                origin_date=origin_date,
                 train_from=train[0].date,
                 train_to=train[-1].date,
                 test_from=test[0].date,
@@ -92,9 +126,15 @@ def split_development_holdout(
     horizon_days: int,
     holdout_days: int,
     min_train_days: int,
+    maturity_days: int = 0,
 ) -> tuple[list[SeriesPoint], list[SeriesPoint]]:
     validate_contiguous_series(series)
-    minimum_days = min_train_days + holdout_days + (horizon_days * 3)
+    minimum_days = (
+        min_train_days
+        + maturity_days
+        + holdout_days
+        + (horizon_days * 3)
+    )
     if len(series) < minimum_days:
         raise ValueError(
             f"At least {minimum_days} mature days are required; got {len(series)}"

@@ -32,6 +32,12 @@ const dateFormatter = new Intl.DateTimeFormat("vi-VN", {
   timeZone: "UTC",
 });
 const terminalStatuses = new Set(["succeeded", "failed"]);
+const modelCodes: ModelCode[] = ["M0", "M1", "M2"];
+const modelNames: Record<ModelCode, string> = {
+  M0: "Seasonal Naive",
+  M1: "SARIMA (1,1,1) × (1,0,1,7)",
+  M2: "M2.1 · LightGBM scaled revenue",
+};
 
 function formatDate(value: string): string {
   return dateFormatter.format(new Date(`${value}T00:00:00Z`));
@@ -60,6 +66,12 @@ export function ModelLabPage() {
     step_days: 30,
     season_length: 7,
     sarima_maxiter: 100,
+    m2_n_estimators: 200,
+    m2_learning_rate: 0.05,
+    m2_num_leaves: 15,
+    m2_max_depth: 5,
+    m2_min_child_samples: 20,
+    m2_seed: 42,
   });
 
   useEffect(() => {
@@ -90,10 +102,15 @@ export function ModelLabPage() {
     Promise.all([
       getLatestRun("M0", filter),
       getLatestRun("M1", filter),
+      getLatestRun("M2", filter),
     ])
-      .then(([m0, m1]) => {
+      .then(([m0, m1, m2]) => {
         if (!active) return;
-        setRuns({ ...(m0 ? { M0: m0 } : {}), ...(m1 ? { M1: m1 } : {}) });
+        setRuns({
+          ...(m0 ? { M0: m0 } : {}),
+          ...(m1 ? { M1: m1 } : {}),
+          ...(m2 ? { M2: m2 } : {}),
+        });
       })
       .catch((requestError) => {
         if (active) setError(errorMessage(requestError));
@@ -110,6 +127,12 @@ export function ModelLabPage() {
     config.step_days,
     config.season_length,
     config.sarima_maxiter,
+    config.m2_n_estimators,
+    config.m2_learning_rate,
+    config.m2_num_leaves,
+    config.m2_max_depth,
+    config.m2_min_child_samples,
+    config.m2_seed,
   ]);
 
   const activeRun = runs[modelCode] ?? null;
@@ -176,9 +199,9 @@ export function ModelLabPage() {
         <div>
           <p className="section-label">Forecast experimentation</p>
           <h1>Model Lab</h1>
-          <p>Backtest M0 và M1 trên cùng snapshot, fold và holdout cố định.</p>
+          <p>Backtest M0–M2 trên cùng snapshot, fold và holdout cố định.</p>
         </div>
-        <span className="model-badge"><b>{modelCode}</b> {modelCode === "M0" ? "Seasonal Naive" : "SARIMA (1,1,1) × (1,0,1,7)"}</span>
+        <span className="model-badge"><b>{modelCode}</b> {modelNames[modelCode]}</span>
       </header>
 
       {error && <div className="analytics-error" role="alert"><span>!</span><div><strong>Không thể hoàn tất yêu cầu</strong><p>{error}</p></div></div>}
@@ -192,14 +215,16 @@ export function ModelLabPage() {
                 <small>Snapshot #{snapshot.id}</small>
               </div>
               <div className="model-config-grid model-config-grid--models">
-                <label><span>Model</span><select value={modelCode} onChange={(event) => setModelCode(event.target.value as ModelCode)}><option value="M0">M0 · Seasonal Naive</option><option value="M1">M1 · SARIMA</option></select></label>
+                <label><span>Model</span><select value={modelCode} onChange={(event) => setModelCode(event.target.value as ModelCode)}><option value="M0">M0 · Seasonal Naive</option><option value="M1">M1 · SARIMA</option><option value="M2">M2.1 · LightGBM scaled</option></select></label>
                 <label><span>Horizon</span><select value={config.horizon_days} onChange={(event) => setConfig({ ...config, horizon_days: Number(event.target.value) as 7 | 30 })}><option value={7}>7 ngày</option><option value={30}>30 ngày</option></select></label>
                 <label><span>Holdout</span><input type="number" min={30} max={180} value={config.holdout_days} onChange={(event) => setConfig({ ...config, holdout_days: Number(event.target.value) })} /></label>
                 <label><span>Train tối thiểu</span><input type="number" min={90} max={730} value={config.min_train_days} onChange={(event) => setConfig({ ...config, min_train_days: Number(event.target.value) })} /></label>
                 <label><span>Bước dịch</span><input type="number" min={7} max={90} value={config.step_days} onChange={(event) => setConfig({ ...config, step_days: Number(event.target.value) })} /></label>
                 {modelCode === "M1" && <label><span>SARIMA max iterations</span><input type="number" min={10} max={500} value={config.sarima_maxiter} onChange={(event) => setConfig({ ...config, sarima_maxiter: Number(event.target.value) })} /></label>}
+                {modelCode === "M2" && <><label><span>Boosting rounds</span><input type="number" min={50} max={1000} value={config.m2_n_estimators} onChange={(event) => setConfig({ ...config, m2_n_estimators: Number(event.target.value) })} /></label><label><span>Learning rate</span><input type="number" min={0.001} max={0.3} step={0.01} value={config.m2_learning_rate} onChange={(event) => setConfig({ ...config, m2_learning_rate: Number(event.target.value) })} /></label><label><span>Leaves</span><input type="number" min={4} max={128} value={config.m2_num_leaves} onChange={(event) => setConfig({ ...config, m2_num_leaves: Number(event.target.value) })} /></label><label><span>Max depth</span><input type="number" min={2} max={12} value={config.m2_max_depth} onChange={(event) => setConfig({ ...config, m2_max_depth: Number(event.target.value) })} /></label></>}
               </div>
               {modelCode === "M1" && <p className="model-config-note">M1 dùng order (1,1,1), seasonal order (1,0,1,7). Mỗi fold chỉ fit dữ liệu trước origin.</p>}
+              {modelCode === "M2" && <p className="model-config-note">M2.1 dự báo trực tiếp tỷ lệ doanh thu so với rolling mean 28 ngày. Feature scale, growth, lịch và Black Friday chỉ dùng dữ liệu đã biết tại origin.</p>}
               <div className="model-config-footer">
                 <div><span className="status-dot" /><p><strong>{snapshot.rules_version}</strong><small>{snapshot.mature_days} ngày mature · cutoff {formatDate(snapshot.mature_until)}</small></p></div>
                 <button className="button button--primary model-run-button" type="submit" disabled={submitting || Boolean(pendingRun) || !canRun}>
@@ -229,19 +254,23 @@ export function ModelLabPage() {
 }
 
 function ModelComparison({ runs, activeModel, onSelect }: { runs: Partial<Record<ModelCode, BacktestRun>>; activeModel: ModelCode; onSelect: (model: ModelCode) => void }) {
-  if (!runs.M0 && !runs.M1) return null;
-  const comparable = !runs.M0 || !runs.M1 || (
-    runs.M0.dataset_fingerprint === runs.M1.dataset_fingerprint
-    && runs.M0.horizon_days === runs.M1.horizon_days
-    && runs.M0.holdout_days === runs.M1.holdout_days
-    && runs.M0.min_train_days === runs.M1.min_train_days
-    && runs.M0.step_days === runs.M1.step_days
-  );
+  const availableRuns = modelCodes
+    .map((code) => runs[code])
+    .filter((run): run is BacktestRun => Boolean(run));
+  if (availableRuns.length === 0) return null;
+  const signature = availableRuns[0];
+  const comparable = availableRuns.every((run) => (
+    run.dataset_fingerprint === signature.dataset_fingerprint
+    && run.horizon_days === signature.horizon_days
+    && run.holdout_days === signature.holdout_days
+    && run.min_train_days === signature.min_train_days
+    && run.step_days === signature.step_days
+  ));
   return (
     <section className="analytics-panel model-comparison-panel">
       <div className="model-panel-heading"><div><span>Leaderboard</span><h2>So sánh trên validation</h2></div><small>Cùng fingerprint và cấu hình fold</small></div>
-      {!comparable && <div className="model-stale-warning" role="alert">Không thể xếp hạng: M0 và M1 không cùng cấu hình thí nghiệm.</div>}
-      <div className="model-table-wrap"><table className="model-fold-table model-comparison-table"><thead><tr><th>Model</th><th>Trạng thái</th><th>MAE</th><th>RMSE</th><th>WAPE</th><th>Folds</th></tr></thead><tbody>{(["M0", "M1"] as ModelCode[]).map((code) => { const run = runs[code]; const metrics = comparable ? run?.metrics : null; return <tr className={activeModel === code ? "is-selected" : ""} key={code}><td><button type="button" onClick={() => onSelect(code)}>{code}</button></td><td><RunState status={run?.status ?? "—"} /></td><td>{metrics ? currency.format(metrics.mae_mean) : "—"}</td><td>{metrics ? currency.format(metrics.rmse_mean) : "—"}</td><td>{metrics?.wape_mean == null ? "—" : `${number.format(metrics.wape_mean)}%`}</td><td>{comparable ? run?.fold_count ?? "—" : "—"}</td></tr>; })}</tbody></table></div>
+      {!comparable && <div className="model-stale-warning" role="alert">Không thể xếp hạng: các model không cùng cấu hình thí nghiệm.</div>}
+      <div className="model-table-wrap"><table className="model-fold-table model-comparison-table"><thead><tr><th>Model</th><th>Trạng thái</th><th>MAE</th><th>RMSE</th><th>WAPE</th><th>Folds</th></tr></thead><tbody>{modelCodes.map((code) => { const run = runs[code]; const metrics = comparable ? run?.metrics : null; return <tr className={activeModel === code ? "is-selected" : ""} key={code}><td><button type="button" onClick={() => onSelect(code)}>{code}</button></td><td><RunState status={run?.status ?? "—"} /></td><td>{metrics ? currency.format(metrics.mae_mean) : "—"}</td><td>{metrics ? currency.format(metrics.rmse_mean) : "—"}</td><td>{metrics?.wape_mean == null ? "—" : `${number.format(metrics.wape_mean)}%`}</td><td>{comparable ? run?.fold_count ?? "—" : "—"}</td></tr>; })}</tbody></table></div>
     </section>
   );
 }

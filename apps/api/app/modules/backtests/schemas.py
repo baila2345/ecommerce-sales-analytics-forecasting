@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class BacktestRequest(BaseModel):
-    model_code: Literal["M0", "M1"] = "M0"
+    model_code: Literal["M0", "M1", "M2"] = "M0"
     dataset_fingerprint: str | None = Field(
         default=None, min_length=64, max_length=64
     )
@@ -19,6 +19,12 @@ class BacktestRequest(BaseModel):
         default=(1, 0, 1, 7)
     )
     sarima_maxiter: int = Field(default=100, ge=10, le=500)
+    m2_n_estimators: int = Field(default=200, ge=50, le=1000)
+    m2_learning_rate: float = Field(default=0.05, gt=0, le=0.3)
+    m2_num_leaves: int = Field(default=15, ge=4, le=128)
+    m2_max_depth: int = Field(default=5, ge=2, le=12)
+    m2_min_child_samples: int = Field(default=20, ge=5, le=200)
+    m2_seed: int = Field(default=42, ge=0, le=2_147_483_647)
 
     @model_validator(mode="after")
     def validate_sarima_parameters(self) -> "BacktestRequest":
@@ -85,6 +91,8 @@ class BacktestRunResponse(BaseModel):
     min_train_days: int
     step_days: int
     experiment_key: str | None
+    model_version: str | None
+    feature_schema_hash: str | None
     holdout_from: date
     holdout_to: date
     holdout_evaluated: bool = False

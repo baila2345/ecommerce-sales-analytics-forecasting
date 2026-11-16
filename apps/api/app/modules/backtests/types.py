@@ -1,11 +1,30 @@
 from dataclasses import dataclass
 from datetime import date
+from functools import cached_property
 
 
 @dataclass(frozen=True)
 class SeriesPoint:
     date: date
     value: float
+
+
+@dataclass(frozen=True)
+class RevenueEvent:
+    purchase_date: date
+    delivered_date: date
+    value: float
+
+
+@dataclass(frozen=True)
+class BacktestDataset:
+    actuals: list[SeriesPoint]
+    revenue_events: list[RevenueEvent]
+    maturity_days: int
+
+    @cached_property
+    def actual_by_date(self) -> dict[date, float]:
+        return {point.date: point.value for point in self.actuals}
 
 
 @dataclass(frozen=True)

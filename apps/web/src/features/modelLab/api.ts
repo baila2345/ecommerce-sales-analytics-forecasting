@@ -17,7 +17,9 @@ export function getLatestSnapshot(): Promise<DatasetSnapshot> {
 export type RunFilter = Pick<
   BacktestConfig,
   "dataset_fingerprint" | "horizon_days" | "holdout_days" |
-  "min_train_days" | "step_days" | "season_length" | "sarima_maxiter"
+  "min_train_days" | "step_days" | "season_length" | "sarima_maxiter" |
+  "m2_n_estimators" | "m2_learning_rate" | "m2_num_leaves" |
+  "m2_max_depth" | "m2_min_child_samples" | "m2_seed"
 >;
 
 export async function getLatestRun(
@@ -31,10 +33,16 @@ export async function getLatestRun(
     query.set("holdout_days", String(filter.holdout_days));
     query.set("min_train_days", String(filter.min_train_days));
     query.set("step_days", String(filter.step_days));
-    query.set(
-      modelCode === "M0" ? "season_length" : "sarima_maxiter",
-      String(modelCode === "M0" ? filter.season_length : filter.sarima_maxiter),
-    );
+    if (modelCode === "M0") query.set("season_length", String(filter.season_length));
+    if (modelCode === "M1") query.set("sarima_maxiter", String(filter.sarima_maxiter));
+    if (modelCode === "M2") {
+      query.set("m2_n_estimators", String(filter.m2_n_estimators));
+      query.set("m2_learning_rate", String(filter.m2_learning_rate));
+      query.set("m2_num_leaves", String(filter.m2_num_leaves));
+      query.set("m2_max_depth", String(filter.m2_max_depth));
+      query.set("m2_min_child_samples", String(filter.m2_min_child_samples));
+      query.set("m2_seed", String(filter.m2_seed));
+    }
   }
   try {
     return await apiRequest<BacktestRun>(`/api/v1/models/runs/latest?${query}`, {

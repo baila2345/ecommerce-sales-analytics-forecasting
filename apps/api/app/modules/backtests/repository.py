@@ -1,12 +1,20 @@
 from decimal import Decimal
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.db.models import BacktestFold, DailySale, DatasetSnapshot, ModelRun
-from app.modules.backtests.types import SeriesPoint
+from app.db.models import (
+    BacktestFold,
+    DailySale,
+    DatasetSnapshot,
+    ModelRun,
+    Order,
+    OrderItem,
+)
+from app.modules.backtests.types import BacktestDataset, RevenueEvent, SeriesPoint
+from app.modules.data_quality.rules import eligible_ml_order_condition
 
 
 class BacktestRepository:
@@ -36,6 +44,40 @@ class BacktestRepository:
         ).all()
         return [SeriesPoint(date=row[0], value=float(row[1])) for row in rows]
 
+    def backtest_dataset(self, snapshot_id: int) -> BacktestDataset:
+        snapshot = self.session.get(DatasetSnapshot, snapshot_id)
+        if snapshot is None:
+            raise ValueError(f"Dataset snapshot {snapshot_id} was not found")
+        actuals = self.mature_revenue_series(snapshot_id)
+        rows = self.session.execute(
+            select(
+                func.date(Order.order_purchase_timestamp),
+                func.date(Order.order_delivered_customer_date),
+                func.sum(OrderItem.price),
+            )
+            .select_from(Order)
+            .join(OrderItem, OrderItem.order_id == Order.order_id)
+            .where(eligible_ml_order_condition())
+            .group_by(
+                Order.order_id,
+                func.date(Order.order_purchase_timestamp),
+                func.date(Order.order_delivered_customer_date),
+            )
+        ).all()
+        events = [
+            RevenueEvent(
+                purchase_date=_as_date(row[0]),
+                delivered_date=_as_date(row[1]),
+                value=float(row[2]),
+            )
+            for row in rows
+        ]
+        return BacktestDataset(
+            actuals=actuals,
+            revenue_events=events,
+            maturity_days=snapshot.maturity_days,
+        )
+
     def get_run(self, run_id: int) -> ModelRun | None:
         return self.session.scalar(
             select(ModelRun)
@@ -56,6 +98,7 @@ class BacktestRepository:
         self,
         *,
         model_code: str,
+        model_version: str | None = None,
         dataset_fingerprint: str | None = None,
         horizon_days: int | None = None,
         holdout_days: int | None = None,
@@ -63,8 +106,19 @@ class BacktestRepository:
         step_days: int | None = None,
         season_length: int | None = None,
         sarima_maxiter: int | None = None,
+        m2_n_estimators: int | None = None,
+        m2_learning_rate: float | None = None,
+        m2_num_leaves: int | None = None,
+        m2_max_depth: int | None = None,
+        m2_min_child_samples: int | None = None,
+        m2_seed: int | None = None,
     ) -> ModelRun | None:
         statement = select(ModelRun).where(ModelRun.model_code == model_code)
+        if model_version is not None:
+            statement = statement.where(
+                ModelRun.config_json["model_version"].as_string()
+                == model_version
+            )
         if dataset_fingerprint is not None:
             statement = statement.where(
                 ModelRun.dataset_fingerprint == dataset_fingerprint
@@ -77,11 +131,21 @@ class BacktestRepository:
             ("step_days", step_days),
             ("season_length", season_length),
             ("sarima_maxiter", sarima_maxiter),
+            ("m2_n_estimators", m2_n_estimators),
+            ("m2_num_leaves", m2_num_leaves),
+            ("m2_max_depth", m2_max_depth),
+            ("m2_min_child_samples", m2_min_child_samples),
+            ("m2_seed", m2_seed),
         ):
             if value is not None:
                 statement = statement.where(
                     ModelRun.config_json[name].as_integer() == value
                 )
+        if m2_learning_rate is not None:
+            statement = statement.where(
+                ModelRun.config_json["m2_learning_rate"].as_float()
+                == m2_learning_rate
+            )
         return self.session.scalar(
             statement.order_by(ModelRun.created_at.desc(), ModelRun.id.desc())
             .limit(1)
@@ -140,3 +204,11 @@ class BacktestRepository:
                 predictions_json=predictions,
             )
         )
+
+
+def _as_date(value: date | datetime | str) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))

@@ -29,15 +29,22 @@ def seasonal_naive_forecast(
     season_length: int = 7,
 ) -> list[float]:
     history = {point.date: point.value for point in train}
-    predictions: list[float] = []
-    for forecast_date in forecast_dates:
-        source_date = forecast_date - timedelta(days=season_length)
+    if not forecast_dates:
+        return []
+    requested = set(forecast_dates)
+    predicted_by_date: dict[date, float] = {}
+    current_date = train[-1].date + timedelta(days=1)
+    final_date = max(forecast_dates)
+    while current_date <= final_date:
+        source_date = current_date - timedelta(days=season_length)
         if source_date not in history:
             raise ValueError("Training history does not cover the seasonal lag")
         prediction = history[source_date]
-        predictions.append(prediction)
-        history[forecast_date] = prediction
-    return predictions
+        history[current_date] = prediction
+        if current_date in requested:
+            predicted_by_date[current_date] = prediction
+        current_date += timedelta(days=1)
+    return [predicted_by_date[forecast_date] for forecast_date in forecast_dates]
 
 
 def run_seasonal_naive_backtest(

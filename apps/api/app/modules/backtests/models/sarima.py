@@ -23,13 +23,20 @@ class SarimaModel:
         train: list[SeriesPoint],
         forecast_dates: list[date],
     ) -> list[float]:
-        return sarima_forecast(
+        if not forecast_dates:
+            return []
+        steps = (max(forecast_dates) - train[-1].date).days
+        all_predictions = sarima_forecast(
             [point.value for point in train],
-            len(forecast_dates),
+            steps,
             order=self.order,
             seasonal_order=self.seasonal_order,
             maxiter=self.maxiter,
         )
+        return [
+            all_predictions[(forecast_date - train[-1].date).days - 1]
+            for forecast_date in forecast_dates
+        ]
 
 
 def sarima_forecast(

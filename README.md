@@ -228,41 +228,49 @@ Phân phối giao hàng hiện tại có P95 là 29 ngày, vì vậy snapshot d�
 - 774 ngày từ 04/09/2016 đến 17/10/2018, trong đó 725 ngày mature đến 29/08/2018;
 - 96.470 order, 110.189 item và revenue `13.220.248,93`.
 
-## Background backtest và M0–M1
+## Background backtest và M0–M2
 
 Migration `0004` tạo `model_runs` và `backtest_folds`; migration `0005` bổ sung
 vòng đời `queued → running → succeeded/failed`, RQ job và lỗi fold. Migration
 `0006` thêm `experiment_key` để request cùng dataset/model/config có tính
 idempotent; run thất bại hoặc quá timeout được phép chạy lại. Endpoint
-`POST /api/v1/models/backtests` trả `202` rồi đưa M0/M1 vào Redis queue; service
-`worker` chạy Seasonal Naive hoặc SARIMA ở nền. Endpoint
+`POST /api/v1/models/backtests` trả `202` rồi đưa M0/M1/M2 vào Redis queue;
+service `worker` chạy Seasonal Naive, SARIMA hoặc LightGBM direct ở nền. Endpoint
 `GET /api/v1/models/runs/{id}` đọc lại đầy đủ run/fold và
-`GET /api/v1/models/runs/latest?model_code=M0|M1` nhận thêm fingerprint, horizon,
-holdout, min-train và step để chỉ lấy run cùng experiment signature. Backtest dùng
-expanding window, không đọc actual tương lai khi dự báo nhiều bước và không dùng
-holdout cuối 90 ngày trong tuning. Worker dùng JSON serializer; Redis chỉ bind
-localhost trong môi trường phát triển.
+`GET /api/v1/models/runs/latest?model_code=M0|M1|M2` nhận thêm fingerprint,
+horizon, cấu hình fold và hyperparameter riêng của model để chỉ lấy run cùng
+experiment signature. Backtest dùng expanding window và mô phỏng as-of: tại mỗi
+origin chỉ dùng đơn đã giao trước origin, train kết thúc tại
+`origin - maturity_days`; holdout cuối 90 ngày không tham gia tuning. Worker dùng
+JSON serializer; Redis chỉ bind localhost trong môi trường phát triển.
 
-Frontend `/model-lab` cho phép admin/analyst cấu hình và chạy M0/M1, polling
+Frontend `/model-lab` cho phép admin/analyst cấu hình và chạy M0/M1/M2, polling
 trạng thái worker, hiển thị lỗi fold, fingerprint, MAE/RMSE/WAPE, biểu đồ
 actual–prediction, metric từng fold và bảng so sánh. Manager chỉ được xem.
 
-Run M0 đầu tiên dùng horizon/step 30 ngày, có 9 fold và giữ kín holdout
-01/06–29/08/2018. Kết quả validation: MAE trung bình `9.497,66`, RMSE
-`12.441,22`, WAPE `34,75%`. Holdout chưa được đánh giá và chỉ mở sau khi đã so
-sánh/chọn model. Import thành công cũng chủ động xóa cache Analytics; lỗi Redis
-không làm hỏng transaction import.
+Benchmark leakage-safe ngày 15/11/2026 dùng horizon/step 30 ngày, maturity 30
+ngày và 8 fold, cùng giữ kín holdout 01/06–29/08/2018:
 
-M1 dùng SARIMA `(1,1,1) × (1,0,1,7)` trên đúng 9 fold của M0. Run #7 cho MAE
-`10.162,31`, RMSE `12.723,13`, WAPE `37,95%`; vì WAPE cao hơn M0 nên chưa chọn
-M1. Holdout vẫn chưa được mở.
+- M0 run #11: MAE `9.000,79`, RMSE `11.869,12`, WAPE `31,17%`;
+- M1 run #12: MAE `10.981,88`, RMSE `13.623,32`, WAPE `38,90%`;
+- M2 v1 run #13: MAE `10.897,54`, RMSE `13.656,38`, WAPE `36,79%`;
+- M2.1 run #15: MAE `7.183,13`, RMSE `10.129,61`, WAPE `24,34%`.
+
+M2 v1 dùng feature lịch, `lead_day`, lag 1/7/14/28 và rolling mean/std 7/14/28
+được chụp tại origin. Phân tích fold cho thấy model bị underprediction khi mức
+doanh thu tăng. M2.1 run #15 chuẩn hóa target theo rolling mean 28 ngày tại
+origin, thêm feature scale/growth và Black Friday; quality gate yêu cầu tối thiểu
+21/28 ngày có revenue và cap target ratio ở `10×`. Kết quả mới: MAE `7.183,13`,
+RMSE `10.129,61`, WAPE `24,34%`, thắng M0 ở 6/8 fold validation. Model/version,
+seed, chính sách feature và `feature_schema_hash` đều tham gia experiment key.
+Holdout chưa được đánh giá. Import thành công cũng chủ động xóa cache Analytics;
+lỗi Redis không làm hỏng transaction import.
 
 ## Kế hoạch phát triển tiếp theo
 
-1. Triển khai LightGBM direct M2 trên cùng snapshot/fold.
-2. Triển khai Orders × AOV và ensemble M3–M4.
-3. So sánh M0–M4, chốt model trước khi mở holdout 90 ngày.
-4. Thêm train final, quantile, Forecast API và Forecast Center.
+1. Triển khai Orders × AOV và ensemble M3–M4.
+2. So sánh M0–M4, chốt model trước khi mở holdout 90 ngày.
+3. Thêm train final, quantile, Forecast API và Forecast Center.
 
 Chi tiết và trạng thái từng gate nằm trong `docs/TECH_PLAN_CODE.md`. Quy tắc bắt
 buộc về cấu trúc module, an toàn dữ liệu/job, ML leakage và verification nằm trong

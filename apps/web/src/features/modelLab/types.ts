@@ -20,7 +20,7 @@ export type DatasetSnapshot = {
   completed_at: string | null;
 };
 
-export type ModelCode = "M0" | "M1";
+export type ModelCode = "M0" | "M1" | "M2";
 export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type BacktestConfig = {
@@ -34,6 +34,12 @@ export type BacktestConfig = {
   sarima_order: [number, number, number];
   sarima_seasonal_order: [number, number, number, number];
   sarima_maxiter: number;
+  m2_n_estimators: number;
+  m2_learning_rate: number;
+  m2_num_leaves: number;
+  m2_max_depth: number;
+  m2_min_child_samples: number;
+  m2_seed: number;
 };
 
 export type PredictionPoint = {
@@ -72,6 +78,8 @@ export type BacktestRun = {
   min_train_days: number;
   step_days: number;
   experiment_key: string | null;
+  model_version: string | null;
+  feature_schema_hash: string | null;
   holdout_from: string;
   holdout_to: string;
   holdout_evaluated: boolean;

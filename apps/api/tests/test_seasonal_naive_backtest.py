@@ -221,7 +221,7 @@ def test_m0_backtest_endpoint_persists_run_and_folds(
     body = completed.model_dump(mode="json")
     assert body["status"] == "succeeded"
     assert body["holdout_evaluated"] is False
-    assert body["fold_count"] == 4
+    assert body["fold_count"] == 3
     assert body["metrics"]["mae_mean"] > 0
     assert len(body["folds"][0]["predictions"]) == 30
     assert all(
@@ -235,7 +235,7 @@ def test_m0_backtest_endpoint_persists_run_and_folds(
     assert latest.status_code == 200
     assert latest.json() == body
     assert db_session.scalar(select(func.count()).select_from(ModelRun)) == 1
-    assert db_session.scalar(select(func.count()).select_from(BacktestFold)) == 4
+    assert db_session.scalar(select(func.count()).select_from(BacktestFold)) == 3
 
 
 def test_m1_fold_failure_is_persisted(
@@ -261,7 +261,7 @@ def test_m1_fold_failure_is_persisted(
     )
     run_id = response.json()["id"]
     monkeypatch.setattr(
-        "app.modules.backtests.service.run_rolling_backtest",
+        "app.modules.backtests.service.run_temporal_rolling_backtest",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             FoldExecutionError("M1", 2, "optimizer failed")
         ),
@@ -392,6 +392,90 @@ def test_latest_run_can_be_filtered_by_complete_experiment_signature(
     assert response.status_code == 200, response.text
     assert response.json()["id"] == h7["id"]
     assert response.json()["id"] != h30["id"]
+
+
+def test_latest_m2_run_is_filtered_by_hyperparameters(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
+    token = seed_backtest_snapshot(db_session)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = {
+        "model_code": "M2",
+        "dataset_fingerprint": "a" * 64,
+        "horizon_days": 30,
+        "holdout_days": 90,
+        "min_train_days": 365,
+        "step_days": 30,
+        "m2_learning_rate": 0.05,
+        "m2_num_leaves": 15,
+        "m2_max_depth": 5,
+        "m2_min_child_samples": 20,
+        "m2_seed": 42,
+    }
+    run_100 = client.post(
+        "/api/v1/models/backtests",
+        headers=headers,
+        json={**base, "m2_n_estimators": 100},
+    ).json()
+    run_200 = client.post(
+        "/api/v1/models/backtests",
+        headers=headers,
+        json={**base, "m2_n_estimators": 200},
+    ).json()
+
+    response = client.get(
+        "/api/v1/models/runs/latest",
+        headers=headers,
+        params={**base, "m2_n_estimators": 100},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == run_100["id"]
+    assert response.json()["id"] != run_200["id"]
+    assert (
+        response.json()["model_version"]
+        == "lightgbm-direct-v3-scaled-stable"
+    )
+
+    legacy = db_session.get(ModelRun, run_200["id"])
+    assert legacy is not None
+    legacy.config_json = {
+        **legacy.config_json,
+        "model_version": "lightgbm-direct-v1",
+    }
+    db_session.commit()
+    legacy_response = client.get(
+        "/api/v1/models/runs/latest",
+        headers=headers,
+        params={**base, "m2_n_estimators": 200},
+    )
+
+    assert legacy_response.status_code == 404
+
+
+def test_invalid_m2_parameters_are_rejected_before_queueing(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
+    token = seed_backtest_snapshot(db_session)
+
+    response = client.post(
+        "/api/v1/models/backtests",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "model_code": "M2",
+            "dataset_fingerprint": "a" * 64,
+            "m2_learning_rate": 0.5,
+        },
+    )
+
+    assert response.status_code == 422
+    assert dispatcher.run_ids == []
 
 
 @pytest.mark.parametrize(

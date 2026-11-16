@@ -250,6 +250,8 @@ describe("M0 Model Lab", () => {
       min_train_days: 365,
       step_days: 30,
       experiment_key: "c".repeat(64),
+      model_version: "seasonal-naive-v2-asof",
+      feature_schema_hash: null,
       holdout_from: "2018-06-01",
       holdout_to: "2018-08-29",
       holdout_evaluated: false,
@@ -320,6 +322,7 @@ describe("M0 Model Lab", () => {
     expect(await screen.findByText("Kết quả M0 · Run #1")).toBeInTheDocument();
     expect(screen.getAllByText("34,75%").length).toBeGreaterThan(0);
     expect(screen.getByText("Holdout đang được khóa")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "M2.1 · LightGBM scaled" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Chạy backtest M0" }));
 
@@ -344,6 +347,11 @@ describe("M0 Model Lab", () => {
       ([url]) => String(url).includes("dataset_fingerprint=")
         && String(url).includes("holdout_days=90")
         && String(url).includes("min_train_days=365"),
+    )).toBe(true);
+    expect(fetchMock.mock.calls.some(
+      ([url]) => String(url).includes("model_code=M2")
+        && String(url).includes("m2_n_estimators=200")
+        && String(url).includes("m2_seed=42"),
     )).toBe(true);
   });
 
@@ -382,7 +390,7 @@ describe("M0 Model Lab", () => {
     render(<App />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Không thể xếp hạng: M0 và M1 không cùng cấu hình thí nghiệm.",
+      "Không thể xếp hạng: các model không cùng cấu hình thí nghiệm.",
     );
   });
 });
