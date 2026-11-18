@@ -42,7 +42,7 @@ def run_backtest(
 
 @router.get("/runs/latest", response_model=BacktestRunResponse)
 def get_latest_model_run(
-    model_code: Literal["M0", "M1", "M2"] = "M0",
+    model_code: Literal["M0", "M1", "M2", "M3"] = "M0",
     dataset_fingerprint: str | None = Query(
         default=None, min_length=64, max_length=64
     ),
@@ -58,6 +58,12 @@ def get_latest_model_run(
     m2_max_depth: int | None = Query(default=None, ge=2, le=12),
     m2_min_child_samples: int | None = Query(default=None, ge=5, le=200),
     m2_seed: int | None = Query(default=None, ge=0, le=2_147_483_647),
+    m3_n_estimators: int | None = Query(default=None, ge=50, le=1000),
+    m3_learning_rate: float | None = Query(default=None, gt=0, le=0.3),
+    m3_num_leaves: int | None = Query(default=None, ge=4, le=128),
+    m3_max_depth: int | None = Query(default=None, ge=2, le=12),
+    m3_min_child_samples: int | None = Query(default=None, ge=5, le=200),
+    m3_seed: int | None = Query(default=None, ge=0, le=2_147_483_647),
     service: BacktestService = Depends(get_service),
     _user: User = Depends(backtest_reader),
 ) -> BacktestRunResponse:
@@ -82,6 +88,12 @@ def get_latest_model_run(
         m2_max_depth=m2_max_depth,
         m2_min_child_samples=m2_min_child_samples,
         m2_seed=m2_seed,
+        m3_n_estimators=m3_n_estimators,
+        m3_learning_rate=m3_learning_rate,
+        m3_num_leaves=m3_num_leaves,
+        m3_max_depth=m3_max_depth,
+        m3_min_child_samples=m3_min_child_samples,
+        m3_seed=m3_seed,
     )
 
 

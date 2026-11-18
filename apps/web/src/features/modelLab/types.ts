@@ -20,7 +20,7 @@ export type DatasetSnapshot = {
   completed_at: string | null;
 };
 
-export type ModelCode = "M0" | "M1" | "M2";
+export type ModelCode = "M0" | "M1" | "M2" | "M3";
 export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type BacktestConfig = {
@@ -40,12 +40,22 @@ export type BacktestConfig = {
   m2_max_depth: number;
   m2_min_child_samples: number;
   m2_seed: number;
+  m3_n_estimators: number;
+  m3_learning_rate: number;
+  m3_num_leaves: number;
+  m3_max_depth: number;
+  m3_min_child_samples: number;
+  m3_seed: number;
 };
 
 export type PredictionPoint = {
   date: string;
   actual: number;
   predicted: number;
+  predicted_orders?: number | null;
+  predicted_aov?: number | null;
+  actual_orders?: number | null;
+  actual_aov?: number | null;
 };
 
 export type FoldMetrics = {
@@ -91,6 +101,12 @@ export type BacktestRun = {
     rmse_std: number;
     wape_mean: number | null;
     wape_std: number | null;
+  } | null;
+  component_metrics: {
+    orders_mae: number;
+    orders_wape: number;
+    aov_mae: number;
+    aov_wape: number;
   } | null;
   folds: BacktestFold[];
   job_id: string | null;

@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class BacktestRequest(BaseModel):
-    model_code: Literal["M0", "M1", "M2"] = "M0"
+    model_code: Literal["M0", "M1", "M2", "M3"] = "M0"
     dataset_fingerprint: str | None = Field(
         default=None, min_length=64, max_length=64
     )
@@ -25,6 +25,12 @@ class BacktestRequest(BaseModel):
     m2_max_depth: int = Field(default=5, ge=2, le=12)
     m2_min_child_samples: int = Field(default=20, ge=5, le=200)
     m2_seed: int = Field(default=42, ge=0, le=2_147_483_647)
+    m3_n_estimators: int = Field(default=200, ge=50, le=1000)
+    m3_learning_rate: float = Field(default=0.05, gt=0, le=0.3)
+    m3_num_leaves: int = Field(default=15, ge=4, le=128)
+    m3_max_depth: int = Field(default=5, ge=2, le=12)
+    m3_min_child_samples: int = Field(default=20, ge=5, le=200)
+    m3_seed: int = Field(default=42, ge=0, le=2_147_483_647)
 
     @model_validator(mode="after")
     def validate_sarima_parameters(self) -> "BacktestRequest":
@@ -58,6 +64,10 @@ class PredictionPointResponse(BaseModel):
     date: date
     actual: float
     predicted: float
+    predicted_orders: float | None = None
+    predicted_aov: float | None = None
+    actual_orders: float | None = None
+    actual_aov: float | None = None
 
 
 class BacktestFoldResponse(BaseModel):
@@ -80,6 +90,13 @@ class AggregateMetricsResponse(BaseModel):
     wape_std: float | None
 
 
+class DecompositionMetricsResponse(BaseModel):
+    orders_mae: float
+    orders_wape: float
+    aov_mae: float
+    aov_wape: float
+
+
 class BacktestRunResponse(BaseModel):
     id: int
     model_code: str
@@ -98,6 +115,7 @@ class BacktestRunResponse(BaseModel):
     holdout_evaluated: bool = False
     fold_count: int
     metrics: AggregateMetricsResponse | None
+    component_metrics: DecompositionMetricsResponse | None
     folds: list[BacktestFoldResponse]
     job_id: str | None
     error: dict | None

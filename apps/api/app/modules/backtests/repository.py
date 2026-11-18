@@ -112,6 +112,12 @@ class BacktestRepository:
         m2_max_depth: int | None = None,
         m2_min_child_samples: int | None = None,
         m2_seed: int | None = None,
+        m3_n_estimators: int | None = None,
+        m3_learning_rate: float | None = None,
+        m3_num_leaves: int | None = None,
+        m3_max_depth: int | None = None,
+        m3_min_child_samples: int | None = None,
+        m3_seed: int | None = None,
     ) -> ModelRun | None:
         statement = select(ModelRun).where(ModelRun.model_code == model_code)
         if model_version is not None:
@@ -136,6 +142,11 @@ class BacktestRepository:
             ("m2_max_depth", m2_max_depth),
             ("m2_min_child_samples", m2_min_child_samples),
             ("m2_seed", m2_seed),
+            ("m3_n_estimators", m3_n_estimators),
+            ("m3_num_leaves", m3_num_leaves),
+            ("m3_max_depth", m3_max_depth),
+            ("m3_min_child_samples", m3_min_child_samples),
+            ("m3_seed", m3_seed),
         ):
             if value is not None:
                 statement = statement.where(
@@ -145,6 +156,11 @@ class BacktestRepository:
             statement = statement.where(
                 ModelRun.config_json["m2_learning_rate"].as_float()
                 == m2_learning_rate
+            )
+        if m3_learning_rate is not None:
+            statement = statement.where(
+                ModelRun.config_json["m3_learning_rate"].as_float()
+                == m3_learning_rate
             )
         return self.session.scalar(
             statement.order_by(ModelRun.created_at.desc(), ModelRun.id.desc())
@@ -185,7 +201,7 @@ class BacktestRepository:
         wape: float | None,
         actual_sum: float,
         prediction_sum: float,
-        predictions: list[dict[str, str | float]],
+        predictions: list[dict[str, str | float | None]],
     ) -> None:
         self.session.add(
             BacktestFold(

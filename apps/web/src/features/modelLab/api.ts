@@ -19,7 +19,9 @@ export type RunFilter = Pick<
   "dataset_fingerprint" | "horizon_days" | "holdout_days" |
   "min_train_days" | "step_days" | "season_length" | "sarima_maxiter" |
   "m2_n_estimators" | "m2_learning_rate" | "m2_num_leaves" |
-  "m2_max_depth" | "m2_min_child_samples" | "m2_seed"
+  "m2_max_depth" | "m2_min_child_samples" | "m2_seed" |
+  "m3_n_estimators" | "m3_learning_rate" | "m3_num_leaves" |
+  "m3_max_depth" | "m3_min_child_samples" | "m3_seed"
 >;
 
 export async function getLatestRun(
@@ -42,6 +44,14 @@ export async function getLatestRun(
       query.set("m2_max_depth", String(filter.m2_max_depth));
       query.set("m2_min_child_samples", String(filter.m2_min_child_samples));
       query.set("m2_seed", String(filter.m2_seed));
+    }
+    if (modelCode === "M3") {
+      query.set("m3_n_estimators", String(filter.m3_n_estimators));
+      query.set("m3_learning_rate", String(filter.m3_learning_rate));
+      query.set("m3_num_leaves", String(filter.m3_num_leaves));
+      query.set("m3_max_depth", String(filter.m3_max_depth));
+      query.set("m3_min_child_samples", String(filter.m3_min_child_samples));
+      query.set("m3_seed", String(filter.m3_seed));
     }
   }
   try {

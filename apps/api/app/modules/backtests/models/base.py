@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from app.modules.backtests.datasets import RevenueAsOfIndex, known_series_at
-from app.modules.backtests.types import BacktestDataset, SeriesPoint
+from app.modules.backtests.types import BacktestDataset, ForecastOutput, SeriesPoint
 
 
 class ForecastModel(Protocol):
@@ -13,7 +13,7 @@ class ForecastModel(Protocol):
         self,
         train: list[SeriesPoint],
         forecast_dates: list[date],
-    ) -> list[float]: ...
+    ) -> ForecastOutput: ...
 
 
 class TemporalForecastModel(Protocol):
@@ -42,6 +42,6 @@ class SeriesModelAdapter:
         index: RevenueAsOfIndex,
         origin_date: date,
         forecast_dates: list[date],
-    ) -> list[float]:
+    ) -> ForecastOutput:
         train = known_series_at(dataset, index, origin_date)
-        return self.model.forecast(train, forecast_dates)
+        return ForecastOutput(self.model.forecast(train, forecast_dates))

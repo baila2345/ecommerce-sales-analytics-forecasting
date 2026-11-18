@@ -32,11 +32,12 @@ const dateFormatter = new Intl.DateTimeFormat("vi-VN", {
   timeZone: "UTC",
 });
 const terminalStatuses = new Set(["succeeded", "failed"]);
-const modelCodes: ModelCode[] = ["M0", "M1", "M2"];
+const modelCodes: ModelCode[] = ["M0", "M1", "M2", "M3"];
 const modelNames: Record<ModelCode, string> = {
   M0: "Seasonal Naive",
   M1: "SARIMA (1,1,1) × (1,0,1,7)",
   M2: "M2.1 · LightGBM scaled revenue",
+  M3: "Orders × AOV decomposition",
 };
 
 function formatDate(value: string): string {
@@ -72,6 +73,12 @@ export function ModelLabPage() {
     m2_max_depth: 5,
     m2_min_child_samples: 20,
     m2_seed: 42,
+    m3_n_estimators: 200,
+    m3_learning_rate: 0.05,
+    m3_num_leaves: 15,
+    m3_max_depth: 5,
+    m3_min_child_samples: 20,
+    m3_seed: 42,
   });
 
   useEffect(() => {
@@ -103,13 +110,15 @@ export function ModelLabPage() {
       getLatestRun("M0", filter),
       getLatestRun("M1", filter),
       getLatestRun("M2", filter),
+      getLatestRun("M3", filter),
     ])
-      .then(([m0, m1, m2]) => {
+      .then(([m0, m1, m2, m3]) => {
         if (!active) return;
         setRuns({
           ...(m0 ? { M0: m0 } : {}),
           ...(m1 ? { M1: m1 } : {}),
           ...(m2 ? { M2: m2 } : {}),
+          ...(m3 ? { M3: m3 } : {}),
         });
       })
       .catch((requestError) => {
@@ -133,6 +142,12 @@ export function ModelLabPage() {
     config.m2_max_depth,
     config.m2_min_child_samples,
     config.m2_seed,
+    config.m3_n_estimators,
+    config.m3_learning_rate,
+    config.m3_num_leaves,
+    config.m3_max_depth,
+    config.m3_min_child_samples,
+    config.m3_seed,
   ]);
 
   const activeRun = runs[modelCode] ?? null;
@@ -199,7 +214,7 @@ export function ModelLabPage() {
         <div>
           <p className="section-label">Forecast experimentation</p>
           <h1>Model Lab</h1>
-          <p>Backtest M0–M2 trên cùng snapshot, fold và holdout cố định.</p>
+          <p>Backtest M0–M3 trên cùng snapshot, fold và holdout cố định.</p>
         </div>
         <span className="model-badge"><b>{modelCode}</b> {modelNames[modelCode]}</span>
       </header>
@@ -215,16 +230,18 @@ export function ModelLabPage() {
                 <small>Snapshot #{snapshot.id}</small>
               </div>
               <div className="model-config-grid model-config-grid--models">
-                <label><span>Model</span><select value={modelCode} onChange={(event) => setModelCode(event.target.value as ModelCode)}><option value="M0">M0 · Seasonal Naive</option><option value="M1">M1 · SARIMA</option><option value="M2">M2.1 · LightGBM scaled</option></select></label>
+                <label><span>Model</span><select value={modelCode} onChange={(event) => setModelCode(event.target.value as ModelCode)}><option value="M0">M0 · Seasonal Naive</option><option value="M1">M1 · SARIMA</option><option value="M2">M2.1 · LightGBM scaled</option><option value="M3">M3 · Orders × AOV</option></select></label>
                 <label><span>Horizon</span><select value={config.horizon_days} onChange={(event) => setConfig({ ...config, horizon_days: Number(event.target.value) as 7 | 30 })}><option value={7}>7 ngày</option><option value={30}>30 ngày</option></select></label>
                 <label><span>Holdout</span><input type="number" min={30} max={180} value={config.holdout_days} onChange={(event) => setConfig({ ...config, holdout_days: Number(event.target.value) })} /></label>
                 <label><span>Train tối thiểu</span><input type="number" min={90} max={730} value={config.min_train_days} onChange={(event) => setConfig({ ...config, min_train_days: Number(event.target.value) })} /></label>
                 <label><span>Bước dịch</span><input type="number" min={7} max={90} value={config.step_days} onChange={(event) => setConfig({ ...config, step_days: Number(event.target.value) })} /></label>
                 {modelCode === "M1" && <label><span>SARIMA max iterations</span><input type="number" min={10} max={500} value={config.sarima_maxiter} onChange={(event) => setConfig({ ...config, sarima_maxiter: Number(event.target.value) })} /></label>}
                 {modelCode === "M2" && <><label><span>Boosting rounds</span><input type="number" min={50} max={1000} value={config.m2_n_estimators} onChange={(event) => setConfig({ ...config, m2_n_estimators: Number(event.target.value) })} /></label><label><span>Learning rate</span><input type="number" min={0.001} max={0.3} step={0.01} value={config.m2_learning_rate} onChange={(event) => setConfig({ ...config, m2_learning_rate: Number(event.target.value) })} /></label><label><span>Leaves</span><input type="number" min={4} max={128} value={config.m2_num_leaves} onChange={(event) => setConfig({ ...config, m2_num_leaves: Number(event.target.value) })} /></label><label><span>Max depth</span><input type="number" min={2} max={12} value={config.m2_max_depth} onChange={(event) => setConfig({ ...config, m2_max_depth: Number(event.target.value) })} /></label></>}
+                {modelCode === "M3" && <><label><span>Boosting rounds</span><input type="number" min={50} max={1000} value={config.m3_n_estimators} onChange={(event) => setConfig({ ...config, m3_n_estimators: Number(event.target.value) })} /></label><label><span>Learning rate</span><input type="number" min={0.001} max={0.3} step={0.01} value={config.m3_learning_rate} onChange={(event) => setConfig({ ...config, m3_learning_rate: Number(event.target.value) })} /></label><label><span>Leaves</span><input type="number" min={4} max={128} value={config.m3_num_leaves} onChange={(event) => setConfig({ ...config, m3_num_leaves: Number(event.target.value) })} /></label><label><span>Max depth</span><input type="number" min={2} max={12} value={config.m3_max_depth} onChange={(event) => setConfig({ ...config, m3_max_depth: Number(event.target.value) })} /></label></>}
               </div>
               {modelCode === "M1" && <p className="model-config-note">M1 dùng order (1,1,1), seasonal order (1,0,1,7). Mỗi fold chỉ fit dữ liệu trước origin.</p>}
               {modelCode === "M2" && <p className="model-config-note">M2.1 dự báo trực tiếp tỷ lệ doanh thu so với rolling mean 28 ngày. Feature scale, growth, lịch và Black Friday chỉ dùng dữ liệu đã biết tại origin.</p>}
+              {modelCode === "M3" && <p className="model-config-note">M3 dự báo Orders và AOV bằng hai LightGBM riêng, sau đó reconcile doanh thu = Orders × AOV. AOV null không tham gia train.</p>}
               <div className="model-config-footer">
                 <div><span className="status-dot" /><p><strong>{snapshot.rules_version}</strong><small>{snapshot.mature_days} ngày mature · cutoff {formatDate(snapshot.mature_until)}</small></p></div>
                 <button className="button button--primary model-run-button" type="submit" disabled={submitting || Boolean(pendingRun) || !canRun}>
@@ -296,11 +313,13 @@ function ModelResults({ run, selectedFold, onSelectFold, isCurrentSnapshot }: { 
         <MetricCard label="WAPE trung bình" value={run.metrics.wape_mean === null ? "—" : `${number.format(run.metrics.wape_mean)}%`} note={run.metrics.wape_std === null ? "Không đủ mẫu" : `± ${number.format(run.metrics.wape_std)} điểm %`} />
         <MetricCard label="Rolling folds" value={String(run.fold_count)} note={`Horizon ${run.horizon_days} ngày`} />
       </section>
+      {run.model_code === "M3" && run.component_metrics && <div className="model-config-note"><strong>Component validation</strong> · Orders MAE {number.format(run.component_metrics.orders_mae)}, WAPE {number.format(run.component_metrics.orders_wape)}% · AOV MAE {currency.format(run.component_metrics.aov_mae)}, WAPE {number.format(run.component_metrics.aov_wape)}%.</div>}
       <div className="holdout-banner"><span>◆</span><div><strong>Holdout đang được khóa</strong><p>{formatDate(run.holdout_from)} – {formatDate(run.holdout_to)} · Chưa dùng để tuning hoặc tính metric.</p></div><b>Chưa đánh giá</b></div>
       <section className="model-detail-grid">
         <article className="analytics-panel model-chart-panel">
           <div className="model-panel-heading"><div><span>Fold diagnostics</span><h2>Actual và prediction</h2></div><small>{selectedFold ? `Fold ${selectedFold.fold_no}` : "Chọn fold"}</small></div>
           {selectedFold ? <PredictionChart points={selectedFold.predictions} modelCode={run.model_code} /> : null}
+          {run.model_code === "M3" && selectedFold ? <M3Decomposition points={selectedFold.predictions} /> : null}
         </article>
         <article className="analytics-panel model-fold-panel">
           <div className="model-panel-heading"><div><span>Validation folds</span><h2>Metric theo cửa sổ</h2></div><small>{run.fold_count} fold</small></div>
@@ -330,6 +349,17 @@ function PredictionChart({ points, modelCode }: { points: PredictionPoint[]; mod
   const y = (value: number) => height - padding - (value / maxValue) * (height - padding * 2);
   const path = (key: "actual" | "predicted") => points.map((point, index) => `${index === 0 ? "M" : "L"} ${x(index)} ${y(point[key])}`).join(" ");
   return <div className="model-chart-wrap"><svg className="model-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Biểu đồ actual và prediction theo ngày">{[0.25, 0.5, 0.75].map((ratio) => <line className="chart-grid-line" key={ratio} x1={padding} x2={width - padding} y1={height * ratio} y2={height * ratio} />)}<path className="model-chart__actual" d={path("actual")} /><path className="model-chart__predicted" d={path("predicted")} /></svg><div className="model-chart-legend"><span><i className="legend-actual" />Actual</span><span><i className="legend-predicted" />{modelCode} prediction</span><small>{formatDate(points[0]!.date)} – {formatDate(points[points.length - 1]!.date)}</small></div></div>;
+}
+
+function M3Decomposition({ points }: { points: PredictionPoint[] }) {
+  const components = points.filter((point) => point.predicted_orders != null && point.predicted_aov != null);
+  if (components.length === 0) return null;
+  const averageOrders = components.reduce((sum, point) => sum + Number(point.predicted_orders), 0) / components.length;
+  const averageAov = components.reduce((sum, point) => sum + Number(point.predicted_aov), 0) / components.length;
+  const actualComponents = components.filter((point) => point.actual_orders != null && point.actual_aov != null);
+  const actualOrders = actualComponents.reduce((sum, point) => sum + Number(point.actual_orders), 0) / Math.max(actualComponents.length, 1);
+  const actualAov = actualComponents.reduce((sum, point) => sum + Number(point.actual_aov), 0) / Math.max(actualComponents.length, 1);
+  return <div className="model-config-note"><strong>Decomposition M3</strong> · Orders dự báo/actual: {number.format(averageOrders)} / {number.format(actualOrders)} mỗi ngày · AOV dự báo/actual: {currency.format(averageAov)} / {currency.format(actualAov)}. Revenue từng ngày luôn được reconcile bằng Orders × AOV.</div>;
 }
 
 function MetricCard({ label, value, note }: { label: string; value: string; note: string }) {

@@ -29,13 +29,26 @@ class RevenueAsOfIndex:
             self._prefix_sums[purchase_date] = prefix_sums
 
     def value(self, purchase_date: date, known_at: date) -> float:
-        deliveries = self._deliveries.get(purchase_date)
-        if not deliveries:
-            return 0.0
-        position = bisect_right(deliveries, known_at) - 1
+        position = self._known_position(purchase_date, known_at)
         if position < 0:
             return 0.0
         return self._prefix_sums[purchase_date][position]
+
+    def order_count(self, purchase_date: date, known_at: date) -> int:
+        position = self._known_position(purchase_date, known_at)
+        return position + 1
+
+    def aov(self, purchase_date: date, known_at: date) -> float | None:
+        count = self.order_count(purchase_date, known_at)
+        if count == 0:
+            return None
+        return self.value(purchase_date, known_at) / count
+
+    def _known_position(self, purchase_date: date, known_at: date) -> int:
+        deliveries = self._deliveries.get(purchase_date)
+        if not deliveries:
+            return -1
+        return bisect_right(deliveries, known_at) - 1
 
     def series(
         self,

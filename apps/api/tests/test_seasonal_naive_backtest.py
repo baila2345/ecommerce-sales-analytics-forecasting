@@ -478,6 +478,67 @@ def test_invalid_m2_parameters_are_rejected_before_queueing(
     assert dispatcher.run_ids == []
 
 
+def test_latest_m3_run_is_filtered_by_hyperparameters(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
+    token = seed_backtest_snapshot(db_session)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = {
+        "model_code": "M3",
+        "dataset_fingerprint": "a" * 64,
+        "horizon_days": 30,
+        "holdout_days": 90,
+        "min_train_days": 365,
+        "step_days": 30,
+        "m3_learning_rate": 0.05,
+        "m3_num_leaves": 15,
+        "m3_max_depth": 5,
+        "m3_min_child_samples": 20,
+        "m3_seed": 42,
+    }
+    run = client.post(
+        "/api/v1/models/backtests",
+        headers=headers,
+        json={**base, "m3_n_estimators": 200},
+    )
+    assert run.status_code == 202, run.text
+
+    response = client.get(
+        "/api/v1/models/runs/latest",
+        headers=headers,
+        params={**base, "m3_n_estimators": 200},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == run.json()["id"]
+    assert response.json()["model_version"] == "orders-aov-v2-decomposition"
+
+
+def test_invalid_m3_parameters_are_rejected_before_queueing(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
+    token = seed_backtest_snapshot(db_session)
+
+    response = client.post(
+        "/api/v1/models/backtests",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "model_code": "M3",
+            "dataset_fingerprint": "a" * 64,
+            "m3_learning_rate": 0.5,
+        },
+    )
+
+    assert response.status_code == 422
+    assert dispatcher.run_ids == []
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

@@ -14,10 +14,15 @@ from app.modules.backtests.engine import (
     split_development_holdout,
 )
 from app.modules.backtests.features.direct_revenue import DIRECT_FEATURE_SCHEMA_HASH
+from app.modules.backtests.features.direct_decomposition import (
+    DECOMPOSITION_FEATURE_SCHEMA_HASH,
+)
 from app.modules.backtests.models.base import SeriesModelAdapter
 from app.modules.backtests.models.lightgbm_direct import LightGBMDirectModel
+from app.modules.backtests.models.orders_aov import OrdersAovModel
 from app.modules.backtests.models.sarima import SarimaModel
 from app.modules.backtests.models.seasonal_naive import SeasonalNaiveModel
+from app.modules.backtests.metrics import calculate_decomposition_metrics
 from app.modules.backtests.queue import BacktestDispatcher
 from app.modules.backtests.repository import BacktestRepository
 from app.modules.backtests.schemas import (
@@ -25,6 +30,7 @@ from app.modules.backtests.schemas import (
     BacktestFoldResponse,
     BacktestRequest,
     BacktestRunResponse,
+    DecompositionMetricsResponse,
     FoldMetricsResponse,
     PredictionPointResponse,
 )
@@ -40,6 +46,7 @@ class BacktestService:
         "M0": "seasonal-naive-v2-asof",
         "M1": "sarima-v2-asof",
         "M2": "lightgbm-direct-v3-scaled-stable",
+        "M3": "orders-aov-v2-decomposition",
     }
     RUN_TIMEOUT = timedelta(minutes=65)
 
@@ -90,6 +97,8 @@ class BacktestService:
         config["model_version"] = self.MODEL_VERSIONS[request.model_code]
         if request.model_code == "M2":
             config["feature_schema_hash"] = DIRECT_FEATURE_SCHEMA_HASH
+        elif request.model_code == "M3":
+            config["feature_schema_hash"] = DECOMPOSITION_FEATURE_SCHEMA_HASH
         run = ModelRun(
             snapshot_id=snapshot.id,
             dataset_fingerprint=snapshot.fingerprint,
@@ -200,7 +209,7 @@ class BacktestService:
                     maxiter=request.sarima_maxiter,
                 )
             )
-        else:
+        elif request.model_code == "M2":
             model = LightGBMDirectModel(
                 n_estimators=request.m2_n_estimators,
                 learning_rate=request.m2_learning_rate,
@@ -208,6 +217,15 @@ class BacktestService:
                 max_depth=request.m2_max_depth,
                 min_child_samples=request.m2_min_child_samples,
                 seed=request.m2_seed,
+            )
+        else:
+            model = OrdersAovModel(
+                n_estimators=request.m3_n_estimators,
+                learning_rate=request.m3_learning_rate,
+                num_leaves=request.m3_num_leaves,
+                max_depth=request.m3_max_depth,
+                min_child_samples=request.m3_min_child_samples,
+                seed=request.m3_seed,
             )
         return run_temporal_rolling_backtest(
             dataset,
@@ -281,6 +299,12 @@ class BacktestService:
         m2_max_depth: int | None = None,
         m2_min_child_samples: int | None = None,
         m2_seed: int | None = None,
+        m3_n_estimators: int | None = None,
+        m3_learning_rate: float | None = None,
+        m3_num_leaves: int | None = None,
+        m3_max_depth: int | None = None,
+        m3_min_child_samples: int | None = None,
+        m3_seed: int | None = None,
     ) -> BacktestRunResponse:
         self._expire_stale_runs()
         run = self.repository.latest_matching_run(
@@ -299,6 +323,12 @@ class BacktestService:
             m2_max_depth=m2_max_depth,
             m2_min_child_samples=m2_min_child_samples,
             m2_seed=m2_seed,
+            m3_n_estimators=m3_n_estimators,
+            m3_learning_rate=m3_learning_rate,
+            m3_num_leaves=m3_num_leaves,
+            m3_max_depth=m3_max_depth,
+            m3_min_child_samples=m3_min_child_samples,
+            m3_seed=m3_seed,
         )
         if run is None:
             raise AppError(
@@ -360,12 +390,27 @@ class BacktestService:
                     "feature_schema_hash": DIRECT_FEATURE_SCHEMA_HASH,
                 }
             )
+        if request.model_code == "M3":
+            common.update(
+                {
+                    "m3_n_estimators": request.m3_n_estimators,
+                    "m3_learning_rate": request.m3_learning_rate,
+                    "m3_num_leaves": request.m3_num_leaves,
+                    "m3_max_depth": request.m3_max_depth,
+                    "m3_min_child_samples": request.m3_min_child_samples,
+                    "m3_seed": request.m3_seed,
+                    "feature_schema_hash": DECOMPOSITION_FEATURE_SCHEMA_HASH,
+                }
+            )
         canonical = json.dumps(common, sort_keys=True, separators=(",", ":"))
         return sha256(canonical.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _response(run: ModelRun) -> BacktestRunResponse:
         metrics = run.metrics_json
+        component_metrics = calculate_decomposition_metrics(
+            [point for fold in run.folds for point in fold.predictions_json]
+        )
         return BacktestRunResponse(
             id=run.id,
             model_code=run.model_code,
@@ -384,6 +429,11 @@ class BacktestService:
             holdout_evaluated=False,
             fold_count=len(run.folds),
             metrics=(AggregateMetricsResponse(**metrics) if metrics else None),
+            component_metrics=(
+                DecompositionMetricsResponse(**component_metrics)
+                if component_metrics
+                else None
+            ),
             folds=[
                 BacktestFoldResponse(
                     fold_no=fold.fold_no,

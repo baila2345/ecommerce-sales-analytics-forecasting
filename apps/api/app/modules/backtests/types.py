@@ -28,6 +28,12 @@ class BacktestDataset:
 
 
 @dataclass(frozen=True)
+class ForecastOutput:
+    predictions: list[float]
+    components: list[dict[str, float]] | None = None
+
+
+@dataclass(frozen=True)
 class MetricSet:
     mae: float
     rmse: float
@@ -45,7 +51,7 @@ class FoldResult:
     test_from: date
     test_to: date
     metrics: MetricSet
-    predictions: list[dict[str, str | float]]
+    predictions: list[dict[str, str | float | None]]
 
 
 @dataclass(frozen=True)

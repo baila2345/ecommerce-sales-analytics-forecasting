@@ -264,6 +264,7 @@ describe("M0 Model Lab", () => {
         wape_mean: 34.75,
         wape_std: 0,
       } : null,
+      component_metrics: null,
       folds: status === "succeeded" ? [{
         fold_no: 1,
         origin_date: "2018-05-01",
@@ -323,6 +324,7 @@ describe("M0 Model Lab", () => {
     expect(screen.getAllByText("34,75%").length).toBeGreaterThan(0);
     expect(screen.getByText("Holdout đang được khóa")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "M2.1 · LightGBM scaled" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "M3 · Orders × AOV" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Chạy backtest M0" }));
 
@@ -352,6 +354,11 @@ describe("M0 Model Lab", () => {
       ([url]) => String(url).includes("model_code=M2")
         && String(url).includes("m2_n_estimators=200")
         && String(url).includes("m2_seed=42"),
+    )).toBe(true);
+    expect(fetchMock.mock.calls.some(
+      ([url]) => String(url).includes("model_code=M3")
+        && String(url).includes("m3_n_estimators=200")
+        && String(url).includes("m3_seed=42"),
     )).toBe(true);
   });
 

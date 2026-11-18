@@ -9,7 +9,7 @@ from app.modules.backtests.datasets import RevenueAsOfIndex
 from app.modules.backtests.types import BacktestDataset
 
 
-DIRECT_FEATURE_NAMES = (
+DIRECT_CALENDAR_FEATURE_NAMES = (
     "lead_day",
     "target_day_of_week",
     "target_day_of_month",
@@ -18,6 +18,9 @@ DIRECT_FEATURE_NAMES = (
     "target_is_weekend",
     "target_is_black_friday_window",
     "target_black_friday_distance",
+)
+DIRECT_FEATURE_NAMES = (
+    *DIRECT_CALENDAR_FEATURE_NAMES,
     "revenue_level_log1p_28",
     "revenue_lag_1_ratio_28",
     "revenue_lag_7_ratio_28",
@@ -55,7 +58,7 @@ class DirectFeatureContext:
     active_scale_days: int
 
 
-def _safe_ratio(numerator: float, denominator: float) -> float:
+def safe_ratio(numerator: float, denominator: float) -> float:
     return numerator / max(abs(denominator), 1.0)
 
 
@@ -77,16 +80,16 @@ def _history_features(
     scale = means[28]
     features = [
         log1p(max(0.0, scale)),
-        *[_safe_ratio(values[offset], scale) for offset in (0, 6, 13, 27)],
-        _safe_ratio(means[7], scale),
-        _safe_ratio(means[14], scale),
+        *[safe_ratio(values[offset], scale) for offset in (0, 6, 13, 27)],
+        safe_ratio(means[7], scale),
+        safe_ratio(means[14], scale),
     ]
     for window in (7, 14, 28):
         window_values = values[:window]
-        features.append(_safe_ratio(pstdev(window_values), means[window]))
+        features.append(safe_ratio(pstdev(window_values), means[window]))
     for window in (7, 14, 28):
         previous_mean = _mean(values, window, window * 2)
-        features.append(_safe_ratio(means[window] - previous_mean, previous_mean))
+        features.append(safe_ratio(means[window] - previous_mean, previous_mean))
     return DirectFeatureContext(
         features=features,
         revenue_scale=scale,
@@ -105,17 +108,14 @@ def _black_friday_features(target_date: date) -> tuple[float, float]:
     return float(distance <= 7), float(min(distance, 15))
 
 
-def _row(
-    context: DirectFeatureContext,
-    *,
-    lead_day: int,
-    target_date: date,
+def calendar_feature_values(
+    *, origin_date: date, target_date: date
 ) -> list[float]:
     black_friday_window, black_friday_distance = _black_friday_features(
         target_date
     )
     return [
-        float(lead_day),
+        float((target_date - origin_date).days),
         float(target_date.weekday()),
         float(target_date.day),
         float(target_date.month),
@@ -123,6 +123,20 @@ def _row(
         float(target_date.weekday() >= 5),
         black_friday_window,
         black_friday_distance,
+    ]
+
+
+def _row(
+    context: DirectFeatureContext,
+    *,
+    lead_day: int,
+    target_date: date,
+) -> list[float]:
+    return [
+        *calendar_feature_values(
+            origin_date=target_date - timedelta(days=lead_day),
+            target_date=target_date,
+        ),
         *context.features,
     ]
 
@@ -184,7 +198,7 @@ def build_training_matrix(
                     target_date=target_date,
                 )
             )
-            target_ratio = _safe_ratio(
+            target_ratio = safe_ratio(
                 index.value(target_date, fit_origin),
                 context.revenue_scale,
             )

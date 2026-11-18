@@ -244,9 +244,10 @@ origin chỉ dùng đơn đã giao trước origin, train kết thúc tại
 `origin - maturity_days`; holdout cuối 90 ngày không tham gia tuning. Worker dùng
 JSON serializer; Redis chỉ bind localhost trong môi trường phát triển.
 
-Frontend `/model-lab` cho phép admin/analyst cấu hình và chạy M0/M1/M2, polling
+Frontend `/model-lab` cho phép admin/analyst cấu hình và chạy M0–M3, polling
 trạng thái worker, hiển thị lỗi fold, fingerprint, MAE/RMSE/WAPE, biểu đồ
-actual–prediction, metric từng fold và bảng so sánh. Manager chỉ được xem.
+actual–prediction, decomposition Orders/AOV của M3, metric từng fold và bảng so
+sánh. Manager chỉ được xem.
 
 Benchmark leakage-safe ngày 15/11/2026 dùng horizon/step 30 ngày, maturity 30
 ngày và 8 fold, cùng giữ kín holdout 01/06–29/08/2018:
@@ -255,6 +256,7 @@ ngày và 8 fold, cùng giữ kín holdout 01/06–29/08/2018:
 - M1 run #12: MAE `10.981,88`, RMSE `13.623,32`, WAPE `38,90%`;
 - M2 v1 run #13: MAE `10.897,54`, RMSE `13.656,38`, WAPE `36,79%`;
 - M2.1 run #15: MAE `7.183,13`, RMSE `10.129,61`, WAPE `24,34%`.
+- M3 run #17: MAE `6.539,74`, RMSE `9.285,26`, WAPE `22,15%`.
 
 M2 v1 dùng feature lịch, `lead_day`, lag 1/7/14/28 và rolling mean/std 7/14/28
 được chụp tại origin. Phân tích fold cho thấy model bị underprediction khi mức
@@ -266,9 +268,15 @@ seed, chính sách feature và `feature_schema_hash` đều tham gia experiment 
 Holdout chưa được đánh giá. Import thành công cũng chủ động xóa cache Analytics;
 lỗi Redis không làm hỏng transaction import.
 
+M3 tách hai LightGBM: Orders dùng objective Poisson, AOV dùng L1 và bỏ ngày AOV
+null khỏi train; revenue luôn reconcile bằng `Orders × AOV`. Trên 240 prediction
+validation, không thiếu component và sai số reconciliation tối đa khoảng `1e-11`.
+Orders đạt MAE `48,06`, WAPE `22,62%`; AOV đạt MAE `16,94`, WAPE `12,36%`.
+M3 thắng M2.1 ở 5/8 fold và đang dẫn đầu validation, nhưng holdout vẫn khóa.
+
 ## Kế hoạch phát triển tiếp theo
 
-1. Triển khai Orders × AOV và ensemble M3–M4.
+1. Triển khai ensemble M4 từ M2.1 và M3 trên validation.
 2. So sánh M0–M4, chốt model trước khi mở holdout 90 ngày.
 3. Thêm train final, quantile, Forecast API và Forecast Center.
 

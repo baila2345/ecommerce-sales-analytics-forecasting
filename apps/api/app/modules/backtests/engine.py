@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 
 from app.modules.backtests.metrics import aggregate_metrics, calculate_metrics
 from app.modules.backtests.datasets import (
@@ -64,7 +64,7 @@ def run_temporal_rolling_backtest(
         origin_date = test[0].date - timedelta(days=1)
         train = known_series_at(dataset, index, origin_date)
         try:
-            predictions = model.forecast(
+            forecast = model.forecast(
                 dataset,
                 index,
                 origin_date,
@@ -72,15 +72,42 @@ def run_temporal_rolling_backtest(
             )
         except Exception as exc:
             raise FoldExecutionError(model.code, fold_no, str(exc)) from exc
+        predictions = forecast.predictions
         if len(predictions) != len(test):
             raise FoldExecutionError(
                 model.code,
                 fold_no,
                 f"Expected {len(test)} predictions; got {len(predictions)}",
             )
+        if forecast.components is not None and len(forecast.components) != len(test):
+            raise FoldExecutionError(
+                model.code,
+                fold_no,
+                "Forecast components must align with predictions",
+            )
         metrics = calculate_metrics(
             [point.value for point in test], predictions
         )
+        prediction_points: list[dict[str, str | float | None]] = []
+        for index_value, (point, prediction) in enumerate(
+            zip(test, predictions, strict=True)
+        ):
+            prediction_point: dict[str, str | float | None] = {
+                "date": point.date.isoformat(),
+                "actual": point.value,
+                "predicted": prediction,
+            }
+            if forecast.components is not None:
+                actual_orders = index.order_count(point.date, date.max)
+                actual_aov = index.aov(point.date, date.max)
+                prediction_point.update(forecast.components[index_value])
+                prediction_point.update(
+                    {
+                        "actual_orders": float(actual_orders),
+                        "actual_aov": actual_aov,
+                    }
+                )
+            prediction_points.append(prediction_point)
         folds.append(
             FoldResult(
                 fold_no=fold_no,
@@ -90,14 +117,7 @@ def run_temporal_rolling_backtest(
                 test_from=test[0].date,
                 test_to=test[-1].date,
                 metrics=metrics,
-                predictions=[
-                    {
-                        "date": point.date.isoformat(),
-                        "actual": point.value,
-                        "predicted": prediction,
-                    }
-                    for point, prediction in zip(test, predictions, strict=True)
-                ],
+                predictions=prediction_points,
             )
         )
         test_start_index += step_days

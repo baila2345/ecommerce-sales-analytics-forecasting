@@ -34,3 +34,37 @@ def aggregate_metrics(folds: list[FoldResult]) -> dict[str, float | None]:
         "wape_mean": fmean(wapes) if wapes else None,
         "wape_std": pstdev(wapes) if wapes else None,
     }
+
+
+def calculate_decomposition_metrics(
+    points: list[dict[str, str | float | None]],
+) -> dict[str, float] | None:
+    complete = [
+        point
+        for point in points
+        if all(
+            point.get(name) is not None
+            for name in (
+                "actual_orders",
+                "predicted_orders",
+                "actual_aov",
+                "predicted_aov",
+            )
+        )
+    ]
+    if not complete:
+        return None
+    orders = calculate_metrics(
+        [float(point["actual_orders"]) for point in complete],
+        [float(point["predicted_orders"]) for point in complete],
+    )
+    aov = calculate_metrics(
+        [float(point["actual_aov"]) for point in complete],
+        [float(point["predicted_aov"]) for point in complete],
+    )
+    return {
+        "orders_mae": orders.mae,
+        "orders_wape": orders.wape or 0.0,
+        "aov_mae": aov.mae,
+        "aov_wape": aov.wape or 0.0,
+    }

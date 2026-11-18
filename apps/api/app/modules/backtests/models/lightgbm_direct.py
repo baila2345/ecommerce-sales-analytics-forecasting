@@ -10,7 +10,7 @@ from app.modules.backtests.features.direct_revenue import (
     build_training_matrix,
     revenue_scale_at_origin,
 )
-from app.modules.backtests.types import BacktestDataset
+from app.modules.backtests.types import BacktestDataset, ForecastOutput
 
 
 @dataclass(frozen=True)
@@ -30,9 +30,9 @@ class LightGBMDirectModel:
         index: RevenueAsOfIndex,
         origin_date: date,
         forecast_dates: list[date],
-    ) -> list[float]:
+    ) -> ForecastOutput:
         if not forecast_dates:
-            return []
+            return ForecastOutput([])
         horizon_days = max((value - origin_date).days for value in forecast_dates)
         features, targets = build_training_matrix(
             dataset,
@@ -68,7 +68,9 @@ class LightGBMDirectModel:
             verbosity=-1,
         )
         estimator.fit(train_frame, targets)
-        return [
-            max(0.0, float(value) * revenue_scale)
-            for value in estimator.predict(forecast_frame)
-        ]
+        return ForecastOutput(
+            [
+                max(0.0, float(value) * revenue_scale)
+                for value in estimator.predict(forecast_frame)
+            ]
+        )
