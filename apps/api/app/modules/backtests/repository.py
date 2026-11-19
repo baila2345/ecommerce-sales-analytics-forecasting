@@ -118,6 +118,7 @@ class BacktestRepository:
         m3_max_depth: int | None = None,
         m3_min_child_samples: int | None = None,
         m3_seed: int | None = None,
+        m4_alpha_grid: list[float] | None = None,
     ) -> ModelRun | None:
         statement = select(ModelRun).where(ModelRun.model_code == model_code)
         if model_version is not None:
@@ -162,11 +163,18 @@ class BacktestRepository:
                 ModelRun.config_json["m3_learning_rate"].as_float()
                 == m3_learning_rate
             )
-        return self.session.scalar(
-            statement.order_by(ModelRun.created_at.desc(), ModelRun.id.desc())
-            .limit(1)
-            .options(selectinload(ModelRun.folds))
-        )
+        ordered = statement.order_by(
+            ModelRun.created_at.desc(), ModelRun.id.desc()
+        ).options(selectinload(ModelRun.folds))
+        if m4_alpha_grid is None:
+            return self.session.scalar(ordered.limit(1))
+        candidates = self.session.scalars(ordered)
+        for candidate in candidates:
+            if m4_alpha_grid is None or candidate.config_json.get(
+                "m4_alpha_grid"
+            ) == m4_alpha_grid:
+                return candidate
+        return None
 
     def run_by_experiment_key(self, experiment_key: str) -> ModelRun | None:
         return self.session.scalar(

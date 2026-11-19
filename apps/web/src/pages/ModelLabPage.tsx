@@ -32,12 +32,13 @@ const dateFormatter = new Intl.DateTimeFormat("vi-VN", {
   timeZone: "UTC",
 });
 const terminalStatuses = new Set(["succeeded", "failed"]);
-const modelCodes: ModelCode[] = ["M0", "M1", "M2", "M3"];
+const modelCodes: ModelCode[] = ["M0", "M1", "M2", "M3", "M4"];
 const modelNames: Record<ModelCode, string> = {
   M0: "Seasonal Naive",
   M1: "SARIMA (1,1,1) × (1,0,1,7)",
   M2: "M2.1 · LightGBM scaled revenue",
   M3: "Orders × AOV decomposition",
+  M4: "Weighted ensemble",
 };
 
 function formatDate(value: string): string {
@@ -79,6 +80,7 @@ export function ModelLabPage() {
     m3_max_depth: 5,
     m3_min_child_samples: 20,
     m3_seed: 42,
+    m4_alpha_grid: Array.from({ length: 11 }, (_, index) => index / 10),
   });
 
   useEffect(() => {
@@ -111,14 +113,16 @@ export function ModelLabPage() {
       getLatestRun("M1", filter),
       getLatestRun("M2", filter),
       getLatestRun("M3", filter),
+      getLatestRun("M4", filter),
     ])
-      .then(([m0, m1, m2, m3]) => {
+      .then(([m0, m1, m2, m3, m4]) => {
         if (!active) return;
         setRuns({
           ...(m0 ? { M0: m0 } : {}),
           ...(m1 ? { M1: m1 } : {}),
           ...(m2 ? { M2: m2 } : {}),
           ...(m3 ? { M3: m3 } : {}),
+          ...(m4 ? { M4: m4 } : {}),
         });
       })
       .catch((requestError) => {
@@ -148,6 +152,7 @@ export function ModelLabPage() {
     config.m3_max_depth,
     config.m3_min_child_samples,
     config.m3_seed,
+    config.m4_alpha_grid,
   ]);
 
   const activeRun = runs[modelCode] ?? null;
@@ -214,7 +219,7 @@ export function ModelLabPage() {
         <div>
           <p className="section-label">Forecast experimentation</p>
           <h1>Model Lab</h1>
-          <p>Backtest M0–M3 trên cùng snapshot, fold và holdout cố định.</p>
+          <p>Backtest M0–M4 trên cùng snapshot, fold và holdout cố định.</p>
         </div>
         <span className="model-badge"><b>{modelCode}</b> {modelNames[modelCode]}</span>
       </header>
@@ -230,7 +235,7 @@ export function ModelLabPage() {
                 <small>Snapshot #{snapshot.id}</small>
               </div>
               <div className="model-config-grid model-config-grid--models">
-                <label><span>Model</span><select value={modelCode} onChange={(event) => setModelCode(event.target.value as ModelCode)}><option value="M0">M0 · Seasonal Naive</option><option value="M1">M1 · SARIMA</option><option value="M2">M2.1 · LightGBM scaled</option><option value="M3">M3 · Orders × AOV</option></select></label>
+                <label><span>Model</span><select value={modelCode} onChange={(event) => setModelCode(event.target.value as ModelCode)}><option value="M0">M0 · Seasonal Naive</option><option value="M1">M1 · SARIMA</option><option value="M2">M2.1 · LightGBM scaled</option><option value="M3">M3 · Orders × AOV</option><option value="M4">M4 · Weighted ensemble</option></select></label>
                 <label><span>Horizon</span><select value={config.horizon_days} onChange={(event) => setConfig({ ...config, horizon_days: Number(event.target.value) as 7 | 30 })}><option value={7}>7 ngày</option><option value={30}>30 ngày</option></select></label>
                 <label><span>Holdout</span><input type="number" min={30} max={180} value={config.holdout_days} onChange={(event) => setConfig({ ...config, holdout_days: Number(event.target.value) })} /></label>
                 <label><span>Train tối thiểu</span><input type="number" min={90} max={730} value={config.min_train_days} onChange={(event) => setConfig({ ...config, min_train_days: Number(event.target.value) })} /></label>
@@ -242,6 +247,7 @@ export function ModelLabPage() {
               {modelCode === "M1" && <p className="model-config-note">M1 dùng order (1,1,1), seasonal order (1,0,1,7). Mỗi fold chỉ fit dữ liệu trước origin.</p>}
               {modelCode === "M2" && <p className="model-config-note">M2.1 dự báo trực tiếp tỷ lệ doanh thu so với rolling mean 28 ngày. Feature scale, growth, lịch và Black Friday chỉ dùng dữ liệu đã biết tại origin.</p>}
               {modelCode === "M3" && <p className="model-config-note">M3 dự báo Orders và AOV bằng hai LightGBM riêng, sau đó reconcile doanh thu = Orders × AOV. AOV null không tham gia train.</p>}
+              {modelCode === "M4" && <p className="model-config-note">M4 chạy hai nhánh M2.1 và M3 trên cùng fold, rồi chọn một trọng số α từ lưới 0,0–1,0 chỉ bằng validation. Holdout vẫn được khóa.</p>}
               <div className="model-config-footer">
                 <div><span className="status-dot" /><p><strong>{snapshot.rules_version}</strong><small>{snapshot.mature_days} ngày mature · cutoff {formatDate(snapshot.mature_until)}</small></p></div>
                 <button className="button button--primary model-run-button" type="submit" disabled={submitting || Boolean(pendingRun) || !canRun}>
@@ -314,12 +320,14 @@ function ModelResults({ run, selectedFold, onSelectFold, isCurrentSnapshot }: { 
         <MetricCard label="Rolling folds" value={String(run.fold_count)} note={`Horizon ${run.horizon_days} ngày`} />
       </section>
       {run.model_code === "M3" && run.component_metrics && <div className="model-config-note"><strong>Component validation</strong> · Orders MAE {number.format(run.component_metrics.orders_mae)}, WAPE {number.format(run.component_metrics.orders_wape)}% · AOV MAE {currency.format(run.component_metrics.aov_mae)}, WAPE {number.format(run.component_metrics.aov_wape)}%.</div>}
+      {run.model_code === "M4" && run.selected_alpha != null && <div className="model-config-note"><strong>Ensemble validation</strong> · α = {number.format(run.selected_alpha)} cho M2.1 và {number.format(1 - run.selected_alpha)} cho M3 · chọn từ {run.alpha_grid?.length ?? 0} giá trị trên validation.</div>}
       <div className="holdout-banner"><span>◆</span><div><strong>Holdout đang được khóa</strong><p>{formatDate(run.holdout_from)} – {formatDate(run.holdout_to)} · Chưa dùng để tuning hoặc tính metric.</p></div><b>Chưa đánh giá</b></div>
       <section className="model-detail-grid">
         <article className="analytics-panel model-chart-panel">
           <div className="model-panel-heading"><div><span>Fold diagnostics</span><h2>Actual và prediction</h2></div><small>{selectedFold ? `Fold ${selectedFold.fold_no}` : "Chọn fold"}</small></div>
           {selectedFold ? <PredictionChart points={selectedFold.predictions} modelCode={run.model_code} /> : null}
           {run.model_code === "M3" && selectedFold ? <M3Decomposition points={selectedFold.predictions} /> : null}
+          {run.model_code === "M4" && selectedFold ? <M4Composition points={selectedFold.predictions} /> : null}
         </article>
         <article className="analytics-panel model-fold-panel">
           <div className="model-panel-heading"><div><span>Validation folds</span><h2>Metric theo cửa sổ</h2></div><small>{run.fold_count} fold</small></div>
@@ -360,6 +368,15 @@ function M3Decomposition({ points }: { points: PredictionPoint[] }) {
   const actualOrders = actualComponents.reduce((sum, point) => sum + Number(point.actual_orders), 0) / Math.max(actualComponents.length, 1);
   const actualAov = actualComponents.reduce((sum, point) => sum + Number(point.actual_aov), 0) / Math.max(actualComponents.length, 1);
   return <div className="model-config-note"><strong>Decomposition M3</strong> · Orders dự báo/actual: {number.format(averageOrders)} / {number.format(actualOrders)} mỗi ngày · AOV dự báo/actual: {currency.format(averageAov)} / {currency.format(actualAov)}. Revenue từng ngày luôn được reconcile bằng Orders × AOV.</div>;
+}
+
+function M4Composition({ points }: { points: PredictionPoint[] }) {
+  const components = points.filter((point) => point.predicted_m2 != null && point.predicted_m3 != null);
+  if (components.length === 0) return null;
+  const meanM2 = components.reduce((sum, point) => sum + Number(point.predicted_m2), 0) / components.length;
+  const meanM3 = components.reduce((sum, point) => sum + Number(point.predicted_m3), 0) / components.length;
+  const alpha = Number(components[0]?.ensemble_alpha ?? 0);
+  return <div className="model-config-note"><strong>Composition M4</strong> · Trung bình M2.1: {currency.format(meanM2)} · M3: {currency.format(meanM3)} · kết hợp với α = {number.format(alpha)}.</div>;
 }
 
 function MetricCard({ label, value, note }: { label: string; value: string; note: string }) {

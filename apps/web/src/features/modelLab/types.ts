@@ -20,7 +20,7 @@ export type DatasetSnapshot = {
   completed_at: string | null;
 };
 
-export type ModelCode = "M0" | "M1" | "M2" | "M3";
+export type ModelCode = "M0" | "M1" | "M2" | "M3" | "M4";
 export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type BacktestConfig = {
@@ -46,6 +46,7 @@ export type BacktestConfig = {
   m3_max_depth: number;
   m3_min_child_samples: number;
   m3_seed: number;
+  m4_alpha_grid: number[];
 };
 
 export type PredictionPoint = {
@@ -56,6 +57,9 @@ export type PredictionPoint = {
   predicted_aov?: number | null;
   actual_orders?: number | null;
   actual_aov?: number | null;
+  predicted_m2?: number | null;
+  predicted_m3?: number | null;
+  ensemble_alpha?: number | null;
 };
 
 export type FoldMetrics = {
@@ -90,6 +94,8 @@ export type BacktestRun = {
   experiment_key: string | null;
   model_version: string | null;
   feature_schema_hash: string | null;
+  selected_alpha: number | null;
+  alpha_grid: number[] | null;
   holdout_from: string;
   holdout_to: string;
   holdout_evaluated: boolean;

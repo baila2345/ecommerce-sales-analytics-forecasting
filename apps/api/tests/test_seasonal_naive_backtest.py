@@ -539,6 +539,78 @@ def test_invalid_m3_parameters_are_rejected_before_queueing(
     assert dispatcher.run_ids == []
 
 
+def test_m4_is_queued_idempotently_with_bounded_alpha_grid(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
+    token = seed_backtest_snapshot(db_session)
+    payload = {
+        "model_code": "M4",
+        "dataset_fingerprint": "a" * 64,
+        "horizon_days": 30,
+        "holdout_days": 90,
+        "min_train_days": 365,
+        "step_days": 30,
+        "m2_n_estimators": 100,
+        "m3_n_estimators": 100,
+        "m4_alpha_grid": [0.0, 0.5, 1.0],
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+
+    first = client.post("/api/v1/models/backtests", headers=headers, json=payload)
+    second = client.post("/api/v1/models/backtests", headers=headers, json=payload)
+    latest = client.get(
+        "/api/v1/models/runs/latest",
+        headers=headers,
+        params=[
+            ("model_code", "M4"),
+            ("dataset_fingerprint", "a" * 64),
+            ("horizon_days", "30"),
+            ("holdout_days", "90"),
+            ("min_train_days", "365"),
+            ("step_days", "30"),
+            ("m2_n_estimators", "100"),
+            ("m3_n_estimators", "100"),
+            ("m4_alpha_grid", "0.0"),
+            ("m4_alpha_grid", "0.5"),
+            ("m4_alpha_grid", "1.0"),
+        ],
+    )
+
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    assert first.json()["id"] == second.json()["id"]
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["id"] == first.json()["id"]
+    assert latest.json()["model_version"] == "weighted-ensemble-v1-validation-grid"
+    assert latest.json()["alpha_grid"] == [0.0, 0.5, 1.0]
+    assert dispatcher.run_ids == [first.json()["id"]]
+
+
+def test_invalid_m4_alpha_is_rejected_before_queueing(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    dispatcher = FakeDispatcher()
+    client.app.dependency_overrides[get_backtest_dispatcher] = lambda: dispatcher
+    token = seed_backtest_snapshot(db_session)
+
+    response = client.post(
+        "/api/v1/models/backtests",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "model_code": "M4",
+            "dataset_fingerprint": "a" * 64,
+            "m4_alpha_grid": [0.0, 1.1],
+        },
+    )
+
+    assert response.status_code == 422
+    assert dispatcher.run_ids == []
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from functools import cached_property
 
@@ -60,6 +60,7 @@ class BacktestResult:
     metrics: dict[str, float | None]
     holdout_from: date
     holdout_to: date
+    metadata: dict[str, float | str | list[float]] = field(default_factory=dict)
 
 
 class FoldExecutionError(RuntimeError):

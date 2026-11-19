@@ -1,3 +1,4 @@
+from math import isfinite
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, status
@@ -42,7 +43,7 @@ def run_backtest(
 
 @router.get("/runs/latest", response_model=BacktestRunResponse)
 def get_latest_model_run(
-    model_code: Literal["M0", "M1", "M2", "M3"] = "M0",
+    model_code: Literal["M0", "M1", "M2", "M3", "M4"] = "M0",
     dataset_fingerprint: str | None = Query(
         default=None, min_length=64, max_length=64
     ),
@@ -64,6 +65,7 @@ def get_latest_model_run(
     m3_max_depth: int | None = Query(default=None, ge=2, le=12),
     m3_min_child_samples: int | None = Query(default=None, ge=5, le=200),
     m3_seed: int | None = Query(default=None, ge=0, le=2_147_483_647),
+    m4_alpha_grid: list[float] | None = Query(default=None, min_length=2),
     service: BacktestService = Depends(get_service),
     _user: User = Depends(backtest_reader),
 ) -> BacktestRunResponse:
@@ -72,6 +74,19 @@ def get_latest_model_run(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             code="INVALID_BACKTEST_HORIZON",
             message="Backtest horizon must be 7 or 30 days",
+        )
+    if m4_alpha_grid is not None and (
+        len(m4_alpha_grid) > 21
+        or len(set(m4_alpha_grid)) != len(m4_alpha_grid)
+        or any(
+            not isfinite(alpha) or alpha < 0 or alpha > 1
+            for alpha in m4_alpha_grid
+        )
+    ):
+        raise AppError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="INVALID_M4_ALPHA_GRID",
+            message="M4 alpha grid requires 2..21 unique values between 0 and 1",
         )
     return service.latest_run(
         model_code,
@@ -94,6 +109,7 @@ def get_latest_model_run(
         m3_max_depth=m3_max_depth,
         m3_min_child_samples=m3_min_child_samples,
         m3_seed=m3_seed,
+        m4_alpha_grid=m4_alpha_grid,
     )
 
 

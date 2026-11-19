@@ -19,6 +19,10 @@ from app.modules.backtests.features.direct_decomposition import (
 )
 from app.modules.backtests.models.base import SeriesModelAdapter
 from app.modules.backtests.models.lightgbm_direct import LightGBMDirectModel
+from app.modules.backtests.models.ensemble import (
+    ENSEMBLE_FEATURE_SCHEMA_HASH,
+    build_ensemble_backtest,
+)
 from app.modules.backtests.models.orders_aov import OrdersAovModel
 from app.modules.backtests.models.sarima import SarimaModel
 from app.modules.backtests.models.seasonal_naive import SeasonalNaiveModel
@@ -47,6 +51,7 @@ class BacktestService:
         "M1": "sarima-v2-asof",
         "M2": "lightgbm-direct-v3-scaled-stable",
         "M3": "orders-aov-v2-decomposition",
+        "M4": "weighted-ensemble-v1-validation-grid",
     }
     RUN_TIMEOUT = timedelta(minutes=65)
 
@@ -95,10 +100,14 @@ class BacktestService:
 
         config = request.model_dump(mode="json")
         config["model_version"] = self.MODEL_VERSIONS[request.model_code]
+        if request.model_code == "M4":
+            config["m4_alpha_grid"] = sorted(request.m4_alpha_grid)
         if request.model_code == "M2":
             config["feature_schema_hash"] = DIRECT_FEATURE_SCHEMA_HASH
         elif request.model_code == "M3":
             config["feature_schema_hash"] = DECOMPOSITION_FEATURE_SCHEMA_HASH
+        elif request.model_code == "M4":
+            config["feature_schema_hash"] = ENSEMBLE_FEATURE_SCHEMA_HASH
         run = ModelRun(
             snapshot_id=snapshot.id,
             dataset_fingerprint=snapshot.fingerprint,
@@ -218,7 +227,7 @@ class BacktestService:
                 min_child_samples=request.m2_min_child_samples,
                 seed=request.m2_seed,
             )
-        else:
+        elif request.model_code == "M3":
             model = OrdersAovModel(
                 n_estimators=request.m3_n_estimators,
                 learning_rate=request.m3_learning_rate,
@@ -226,6 +235,40 @@ class BacktestService:
                 max_depth=request.m3_max_depth,
                 min_child_samples=request.m3_min_child_samples,
                 seed=request.m3_seed,
+            )
+        else:
+            direct = run_temporal_rolling_backtest(
+                dataset,
+                model=LightGBMDirectModel(
+                    n_estimators=request.m2_n_estimators,
+                    learning_rate=request.m2_learning_rate,
+                    num_leaves=request.m2_num_leaves,
+                    max_depth=request.m2_max_depth,
+                    min_child_samples=request.m2_min_child_samples,
+                    seed=request.m2_seed,
+                ),
+                horizon_days=request.horizon_days,
+                holdout_days=request.holdout_days,
+                min_train_days=request.min_train_days,
+                step_days=request.step_days,
+            )
+            decomposition = run_temporal_rolling_backtest(
+                dataset,
+                model=OrdersAovModel(
+                    n_estimators=request.m3_n_estimators,
+                    learning_rate=request.m3_learning_rate,
+                    num_leaves=request.m3_num_leaves,
+                    max_depth=request.m3_max_depth,
+                    min_child_samples=request.m3_min_child_samples,
+                    seed=request.m3_seed,
+                ),
+                horizon_days=request.horizon_days,
+                holdout_days=request.holdout_days,
+                min_train_days=request.min_train_days,
+                step_days=request.step_days,
+            )
+            return build_ensemble_backtest(
+                direct, decomposition, request.m4_alpha_grid
             )
         return run_temporal_rolling_backtest(
             dataset,
@@ -254,6 +297,8 @@ class BacktestService:
                 predictions=fold.predictions,
             )
         run.metrics_json = result.metrics
+        if result.metadata:
+            run.config_json = {**run.config_json, **result.metadata}
         run.status = ModelRunStatus.SUCCEEDED.value
         run.completed_at = utc_now()
         self.session.add(
@@ -305,6 +350,7 @@ class BacktestService:
         m3_max_depth: int | None = None,
         m3_min_child_samples: int | None = None,
         m3_seed: int | None = None,
+        m4_alpha_grid: list[float] | None = None,
     ) -> BacktestRunResponse:
         self._expire_stale_runs()
         run = self.repository.latest_matching_run(
@@ -329,6 +375,9 @@ class BacktestService:
             m3_max_depth=m3_max_depth,
             m3_min_child_samples=m3_min_child_samples,
             m3_seed=m3_seed,
+            m4_alpha_grid=(
+                sorted(m4_alpha_grid) if m4_alpha_grid is not None else None
+            ),
         )
         if run is None:
             raise AppError(
@@ -378,7 +427,7 @@ class BacktestService:
                     "sarima_maxiter": request.sarima_maxiter,
                 }
             )
-        if request.model_code == "M2":
+        if request.model_code in ("M2", "M4"):
             common.update(
                 {
                     "m2_n_estimators": request.m2_n_estimators,
@@ -390,7 +439,7 @@ class BacktestService:
                     "feature_schema_hash": DIRECT_FEATURE_SCHEMA_HASH,
                 }
             )
-        if request.model_code == "M3":
+        if request.model_code in ("M3", "M4"):
             common.update(
                 {
                     "m3_n_estimators": request.m3_n_estimators,
@@ -400,6 +449,13 @@ class BacktestService:
                     "m3_min_child_samples": request.m3_min_child_samples,
                     "m3_seed": request.m3_seed,
                     "feature_schema_hash": DECOMPOSITION_FEATURE_SCHEMA_HASH,
+                }
+            )
+        if request.model_code == "M4":
+            common.update(
+                {
+                    "m4_alpha_grid": sorted(request.m4_alpha_grid),
+                    "feature_schema_hash": ENSEMBLE_FEATURE_SCHEMA_HASH,
                 }
             )
         canonical = json.dumps(common, sort_keys=True, separators=(",", ":"))
@@ -424,6 +480,17 @@ class BacktestService:
             experiment_key=run.experiment_key,
             model_version=run.config_json.get("model_version"),
             feature_schema_hash=run.config_json.get("feature_schema_hash"),
+            selected_alpha=(
+                run.config_json.get("selected_alpha")
+                if run.model_code == "M4"
+                else None
+            ),
+            alpha_grid=(
+                run.config_json.get("alpha_grid")
+                or run.config_json.get("m4_alpha_grid")
+                if run.model_code == "M4"
+                else None
+            ),
             holdout_from=run.holdout_from,
             holdout_to=run.holdout_to,
             holdout_evaluated=False,

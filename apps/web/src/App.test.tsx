@@ -325,6 +325,7 @@ describe("M0 Model Lab", () => {
     expect(screen.getByText("Holdout đang được khóa")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "M2.1 · LightGBM scaled" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "M3 · Orders × AOV" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "M4 · Weighted ensemble" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Chạy backtest M0" }));
 
@@ -360,6 +361,12 @@ describe("M0 Model Lab", () => {
         && String(url).includes("m3_n_estimators=200")
         && String(url).includes("m3_seed=42"),
     )).toBe(true);
+    expect(fetchMock.mock.calls.some(
+      ([url]) => String(url).includes("model_code=M4")
+        && String(url).includes("m2_n_estimators=200")
+        && String(url).includes("m3_n_estimators=200")
+        && String(url).includes("m4_alpha_grid=0.5"),
+    )).toBe(true);
   });
 
   it("renders the persisted fold error from a failed worker run", async () => {
@@ -377,6 +384,39 @@ describe("M0 Model Lab", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("M0 chạy thất bại tại fold #2");
     expect(screen.getByRole("alert")).toHaveTextContent("optimizer failed");
+  });
+
+  it("shows the selected M4 alpha and both branch predictions", async () => {
+    window.history.replaceState({}, "", "/model-lab");
+    sessionStorage.setItem("sales_analytics_access_token", "existing-token");
+    const m4Run = makeRun(19, "succeeded", {
+      model_code: "M4",
+      model_version: "weighted-ensemble-v1-validation-grid",
+      selected_alpha: 0,
+      alpha_grid: [0, 0.5, 1],
+      folds: [{
+        ...makeRun(19).folds[0],
+        predictions: [
+          { date: "2018-05-01", actual: 3000, predicted: 2900, predicted_m2: 2700, predicted_m3: 2900, ensemble_alpha: 0 },
+          { date: "2018-05-02", actual: 3500, predicted: 3300, predicted_m2: 3100, predicted_m3: 3300, ensemble_alpha: 0 },
+        ],
+      }],
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return Promise.resolve(jsonResponse(userProfile));
+      if (url.includes("/datasets/snapshots/latest")) return Promise.resolve(jsonResponse(snapshot));
+      if (url.includes("model_code=M4")) return Promise.resolve(jsonResponse(m4Run));
+      return Promise.resolve(jsonResponse({ error: { code: "MODEL_RUN_NOT_FOUND", message: "not found" } }, 404));
+    }));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Model" }), "M4");
+    expect(await screen.findByText("Kết quả M4 · Run #19")).toBeInTheDocument();
+    expect(screen.getByText(/α = 0 cho M2\.1 và 1 cho M3/)).toBeInTheDocument();
+    expect(screen.getByText(/Composition M4/)).toBeInTheDocument();
   });
 
   it("refuses to rank runs with different experiment signatures", async () => {

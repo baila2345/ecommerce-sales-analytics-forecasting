@@ -1,11 +1,12 @@
 from datetime import date, datetime
+from math import isfinite
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 
 class BacktestRequest(BaseModel):
-    model_code: Literal["M0", "M1", "M2", "M3"] = "M0"
+    model_code: Literal["M0", "M1", "M2", "M3", "M4"] = "M0"
     dataset_fingerprint: str | None = Field(
         default=None, min_length=64, max_length=64
     )
@@ -31,6 +32,11 @@ class BacktestRequest(BaseModel):
     m3_max_depth: int = Field(default=5, ge=2, le=12)
     m3_min_child_samples: int = Field(default=20, ge=5, le=200)
     m3_seed: int = Field(default=42, ge=0, le=2_147_483_647)
+    m4_alpha_grid: list[float] = Field(
+        default_factory=lambda: [value / 10 for value in range(11)],
+        min_length=2,
+        max_length=21,
+    )
 
     @model_validator(mode="after")
     def validate_sarima_parameters(self) -> "BacktestRequest":
@@ -49,6 +55,13 @@ class BacktestRequest(BaseModel):
                 "SARIMA seasonal order requires P/Q in 0..3, D in 0..2, "
                 "and period in 2..30"
             )
+        if any(
+            not isfinite(alpha) or alpha < 0 or alpha > 1
+            for alpha in self.m4_alpha_grid
+        ):
+            raise ValueError("M4 alpha values must be between 0 and 1")
+        if len(set(self.m4_alpha_grid)) != len(self.m4_alpha_grid):
+            raise ValueError("M4 alpha grid must not contain duplicates")
         return self
 
 
@@ -68,6 +81,9 @@ class PredictionPointResponse(BaseModel):
     predicted_aov: float | None = None
     actual_orders: float | None = None
     actual_aov: float | None = None
+    predicted_m2: float | None = None
+    predicted_m3: float | None = None
+    ensemble_alpha: float | None = None
 
 
 class BacktestFoldResponse(BaseModel):
@@ -110,6 +126,8 @@ class BacktestRunResponse(BaseModel):
     experiment_key: str | None
     model_version: str | None
     feature_schema_hash: str | None
+    selected_alpha: float | None = None
+    alpha_grid: list[float] | None = None
     holdout_from: date
     holdout_to: date
     holdout_evaluated: bool = False

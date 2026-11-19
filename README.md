@@ -228,16 +228,16 @@ Phân phối giao hàng hiện tại có P95 là 29 ngày, vì vậy snapshot d�
 - 774 ngày từ 04/09/2016 đến 17/10/2018, trong đó 725 ngày mature đến 29/08/2018;
 - 96.470 order, 110.189 item và revenue `13.220.248,93`.
 
-## Background backtest và M0–M2
+## Background backtest và M0–M4
 
 Migration `0004` tạo `model_runs` và `backtest_folds`; migration `0005` bổ sung
 vòng đời `queued → running → succeeded/failed`, RQ job và lỗi fold. Migration
 `0006` thêm `experiment_key` để request cùng dataset/model/config có tính
 idempotent; run thất bại hoặc quá timeout được phép chạy lại. Endpoint
-`POST /api/v1/models/backtests` trả `202` rồi đưa M0/M1/M2 vào Redis queue;
-service `worker` chạy Seasonal Naive, SARIMA hoặc LightGBM direct ở nền. Endpoint
+`POST /api/v1/models/backtests` trả `202` rồi đưa M0–M4 vào Redis queue;
+service `worker` chạy model tương ứng ở nền. Endpoint
 `GET /api/v1/models/runs/{id}` đọc lại đầy đủ run/fold và
-`GET /api/v1/models/runs/latest?model_code=M0|M1|M2` nhận thêm fingerprint,
+`GET /api/v1/models/runs/latest?model_code=M0|M1|M2|M3|M4` nhận thêm fingerprint,
 horizon, cấu hình fold và hyperparameter riêng của model để chỉ lấy run cùng
 experiment signature. Backtest dùng expanding window và mô phỏng as-of: tại mỗi
 origin chỉ dùng đơn đã giao trước origin, train kết thúc tại
@@ -249,7 +249,7 @@ trạng thái worker, hiển thị lỗi fold, fingerprint, MAE/RMSE/WAPE, biể
 actual–prediction, decomposition Orders/AOV của M3, metric từng fold và bảng so
 sánh. Manager chỉ được xem.
 
-Benchmark leakage-safe ngày 15/11/2026 dùng horizon/step 30 ngày, maturity 30
+Benchmark leakage-safe cập nhật ngày 18/11/2026 dùng horizon/step 30 ngày, maturity 30
 ngày và 8 fold, cùng giữ kín holdout 01/06–29/08/2018:
 
 - M0 run #11: MAE `9.000,79`, RMSE `11.869,12`, WAPE `31,17%`;
@@ -257,6 +257,7 @@ ngày và 8 fold, cùng giữ kín holdout 01/06–29/08/2018:
 - M2 v1 run #13: MAE `10.897,54`, RMSE `13.656,38`, WAPE `36,79%`;
 - M2.1 run #15: MAE `7.183,13`, RMSE `10.129,61`, WAPE `24,34%`.
 - M3 run #17: MAE `6.539,74`, RMSE `9.285,26`, WAPE `22,15%`.
+- M4 run #19: chọn `alpha=0`, MAE `6.539,74`, RMSE `9.285,26`, WAPE `22,15%`.
 
 M2 v1 dùng feature lịch, `lead_day`, lag 1/7/14/28 và rolling mean/std 7/14/28
 được chụp tại origin. Phân tích fold cho thấy model bị underprediction khi mức
@@ -272,13 +273,16 @@ M3 tách hai LightGBM: Orders dùng objective Poisson, AOV dùng L1 và bỏ ng�
 null khỏi train; revenue luôn reconcile bằng `Orders × AOV`. Trên 240 prediction
 validation, không thiếu component và sai số reconciliation tối đa khoảng `1e-11`.
 Orders đạt MAE `48,06`, WAPE `22,62%`; AOV đạt MAE `16,94`, WAPE `12,36%`.
-M3 thắng M2.1 ở 5/8 fold và đang dẫn đầu validation, nhưng holdout vẫn khóa.
+M3 thắng M2.1 ở 5/8 fold. M4 thử lưới alpha `0,0–1,0` trên prediction
+validation ngoài mẫu và chọn `alpha=0`, tức không cải thiện so với M3. Theo quy
+tắc ưu tiên model đơn giản khi metric bằng nhau, M3 vẫn là ứng viên được chọn;
+holdout tiếp tục khóa.
 
 ## Kế hoạch phát triển tiếp theo
 
-1. Triển khai ensemble M4 từ M2.1 và M3 trên validation.
-2. So sánh M0–M4, chốt model trước khi mở holdout 90 ngày.
-3. Thêm train final, quantile, Forecast API và Forecast Center.
+1. Persist quyết định chọn M3, tạo artifact tái lập và chỉ sau đó mở holdout 90 ngày.
+2. Thêm train final, quantile, Forecast API và Forecast Center.
+3. Bổ sung explain/monitoring, E2E và báo cáo thực nghiệm.
 
 Chi tiết và trạng thái từng gate nằm trong `docs/TECH_PLAN_CODE.md`. Quy tắc bắt
 buộc về cấu trúc module, an toàn dữ liệu/job, ML leakage và verification nằm trong

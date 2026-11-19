@@ -21,7 +21,7 @@ export type RunFilter = Pick<
   "m2_n_estimators" | "m2_learning_rate" | "m2_num_leaves" |
   "m2_max_depth" | "m2_min_child_samples" | "m2_seed" |
   "m3_n_estimators" | "m3_learning_rate" | "m3_num_leaves" |
-  "m3_max_depth" | "m3_min_child_samples" | "m3_seed"
+  "m3_max_depth" | "m3_min_child_samples" | "m3_seed" | "m4_alpha_grid"
 >;
 
 export async function getLatestRun(
@@ -37,7 +37,7 @@ export async function getLatestRun(
     query.set("step_days", String(filter.step_days));
     if (modelCode === "M0") query.set("season_length", String(filter.season_length));
     if (modelCode === "M1") query.set("sarima_maxiter", String(filter.sarima_maxiter));
-    if (modelCode === "M2") {
+    if (modelCode === "M2" || modelCode === "M4") {
       query.set("m2_n_estimators", String(filter.m2_n_estimators));
       query.set("m2_learning_rate", String(filter.m2_learning_rate));
       query.set("m2_num_leaves", String(filter.m2_num_leaves));
@@ -45,13 +45,16 @@ export async function getLatestRun(
       query.set("m2_min_child_samples", String(filter.m2_min_child_samples));
       query.set("m2_seed", String(filter.m2_seed));
     }
-    if (modelCode === "M3") {
+    if (modelCode === "M3" || modelCode === "M4") {
       query.set("m3_n_estimators", String(filter.m3_n_estimators));
       query.set("m3_learning_rate", String(filter.m3_learning_rate));
       query.set("m3_num_leaves", String(filter.m3_num_leaves));
       query.set("m3_max_depth", String(filter.m3_max_depth));
       query.set("m3_min_child_samples", String(filter.m3_min_child_samples));
       query.set("m3_seed", String(filter.m3_seed));
+    }
+    if (modelCode === "M4") {
+      filter.m4_alpha_grid.forEach((alpha) => query.append("m4_alpha_grid", String(alpha)));
     }
   }
   try {
